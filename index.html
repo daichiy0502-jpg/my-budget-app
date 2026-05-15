@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>マイバジェットアプリ</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-5">
+    <div id="app" class="max-w-md mx-auto bg-white p-8 rounded-lg shadow-lg">
+        <h1 class="text-2xl font-bold mb-5 text-blue-600">💰 マイバジェットアプリ</h1>
+        
+        <div class="mb-5">
+            <label class="block text-sm font-medium text-gray-700">項目</label>
+            <input v-model="newItem" type="text" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2" placeholder="例：食費">
+        </div>
+        
+        <div class="mb-5">
+            <label class="block text-sm font-medium text-gray-700">金額</label>
+            <input v-model.number="newAmount" type="number" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2" placeholder="0">
+        </div>
+        
+        <button @click="addRecord" class="w-full bg-blue-500 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">
+            追加する
+        </button>
+
+        <hr class="my-6">
+
+        <ul>
+            <li v-for="(record, index) in records" :key="index" class="flex justify-between border-b py-2">
+                <span>{{ record.item }}</span>
+                <span class="font-bold text-red-500">¥{{ record.amount.toLocaleString() }}</span>
+            </li>
+        </ul>
+        
+        <div class="mt-5 text-xl font-bold text-right">
+            合計: ¥{{ totalAmount.toLocaleString() }}
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed } = Vue
+        createApp({
+            setup() {
+                const newItem = ref('')
+                const newAmount = ref(0)
+                const records = ref([])
+
+                const addRecord = () => {
+                    if (newItem.value && newAmount.value > 0) {
+                        records.value.push({ item: newItem.value, amount: newAmount.value })
+                        newItem.value = ''
+                        newAmount.value = 0
+                    }
+                }
+
+                const totalAmount = computed(() => {
+                    return records.value.reduce((sum, r) => sum + r.amount, 0)
+                })
+
+                return { newItem, newAmount, records, addRecord, totalAmount }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
