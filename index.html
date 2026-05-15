@@ -2,63 +2,88 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>マイバジェットアプリ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BudgetBite</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
-<body class="bg-gray-100 p-5">
-    <div id="app" class="max-w-md mx-auto bg-white p-8 rounded-lg shadow-lg">
-        <h1 class="text-2xl font-bold mb-5 text-blue-600">💰 マイバジェットアプリ</h1>
-        
-        <div class="mb-5">
-            <label class="block text-sm font-medium text-gray-700">項目</label>
-            <input v-model="newItem" type="text" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2" placeholder="例：食費">
+<body class="bg-slate-950 text-slate-100 p-6 font-sans">
+    <div id="app">
+        <header class="mb-8 bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl max-w-lg mx-auto">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-wallet text-cyan-400"></i>
+                    <h1 class="text-xl font-bold">Monthly Budget</h1>
+                </div>
+                <span class="text-xs bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded-full border border-cyan-500/30">
+                    残り ¥{{ (budget - spent).toLocaleString() }}
+                </span>
+            </div>
+            
+            <div class="w-full bg-slate-800 h-4 rounded-full overflow-hidden">
+                <div class="h-full transition-all duration-1000"
+                     :class="progress > 80 ? 'bg-rose-500' : 'bg-cyan-500'"
+                     :style="{ width: progress + '%' }">
+                </div>
+            </div>
+            <div class="flex justify-between mt-2 text-sm text-slate-400">
+                <span>¥{{ spent.toLocaleString() }} 使用済み</span>
+                <span>目標: ¥{{ budget.toLocaleString() }}</span>
+            </div>
+        </header>
+
+        <div class="grid gap-6 max-w-lg mx-auto">
+            <section>
+                <div class="flex items-center gap-2 mb-4">
+                    <i class="fas fa-utensils text-amber-400"></i>
+                    <h2 class="font-semibold text-lg">Weekly Menus</h2>
+                </div>
+                <div class="space-y-3">
+                    <div v-for="(menu, i) in menus" :key="i" class="bg-slate-900/50 p-4 rounded-2xl border border-slate-800 hover:border-slate-700 transition">
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-500 text-sm font-bold">{{ menu.day }}</span>
+                            <span class="text-slate-200">{{ menu.dish }}</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section>
+                <div class="flex items-center gap-2 mb-4">
+                    <i class="fas fa-shopping-cart text-purple-400"></i>
+                    <h2 class="font-semibold text-lg">Shopping List</h2>
+                </div>
+                <div class="bg-slate-900 p-4 rounded-2xl border border-slate-800">
+                    <label v-for="(item, i) in shoppingList" :key="i" class="flex items-center gap-3 py-2 border-b border-slate-800 last:border-0 cursor-pointer">
+                        <input type="checkbox" class="w-5 h-5 rounded-md border-slate-700 bg-slate-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-900" />
+                        <span class="text-slate-300">{{ item }}</span>
+                    </label>
+                </div>
+            </section>
         </div>
-        
-        <div class="mb-5">
-            <label class="block text-sm font-medium text-gray-700">金額</label>
-            <input v-model.number="newAmount" type="number" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2" placeholder="0">
-        </div>
-        
-        <button @click="addRecord" class="w-full bg-blue-500 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">
-            追加する
+
+        <button class="fixed bottom-8 right-8 bg-cyan-600 hover:bg-cyan-500 text-white p-4 rounded-full shadow-lg shadow-cyan-500/20 transition-all active:scale-90">
+            <i class="fas fa-plus text-2xl"></i>
         </button>
-
-        <hr class="my-6">
-
-        <ul>
-            <li v-for="(record, index) in records" :key="index" class="flex justify-between border-b py-2">
-                <span>{{ record.item }}</span>
-                <span class="font-bold text-red-500">¥{{ record.amount.toLocaleString() }}</span>
-            </li>
-        </ul>
-        
-        <div class="mt-5 text-xl font-bold text-right">
-            合計: ¥{{ totalAmount.toLocaleString() }}
-        </div>
     </div>
 
     <script>
         const { createApp, ref, computed } = Vue
         createApp({
             setup() {
-                const newItem = ref('')
-                const newAmount = ref(0)
-                const records = ref([])
+                const budget = ref(30000)
+                const spent = ref(7500)
+                const menus = ref([
+                    { day: '月', dish: '鶏胸肉の低温調理' },
+                    { day: '火', dish: '鮭のムニエル' },
+                    { day: '水', dish: 'パスタ・アマトリチャーナ' }
+                ])
+                const shoppingList = ref(['卵', '玉ねぎ', 'パスタ麺', 'オリーブオイル'])
 
-                const addRecord = () => {
-                    if (newItem.value && newAmount.value > 0) {
-                        records.value.push({ item: newItem.value, amount: newAmount.value })
-                        newItem.value = ''
-                        newAmount.value = 0
-                    }
-                }
+                const progress = computed(() => (spent.value / budget.value) * 100)
 
-                const totalAmount = computed(() => {
-                    return records.value.reduce((sum, r) => sum + r.amount, 0)
-                })
-
-                return { newItem, newAmount, records, addRecord, totalAmount }
+                return { budget, spent, menus, shoppingList, progress }
             }
         }).mount('#app')
     </script>
