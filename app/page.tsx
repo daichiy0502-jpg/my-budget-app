@@ -106,7 +106,7 @@ export default function BudgetBiteAI() {
           parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
           currentSectionIdx = parsedSections.length - 1;
         } else if (currentSectionIdx >= 0 && /^[\s\-\*・\d\.]/.test(trimmed)) {
-          let name = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+          let name = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\复/g, '').replace(/\*\*/g, '').trim();
           if (name.length > 0 && name.length < 50) { 
             parsedSections[currentSectionIdx].items.push({ id: `item-${currentSectionIdx}-${lineIdx}`, name, checked: false, fridgeIn: false });
           }
@@ -272,7 +272,7 @@ export default function BudgetBiteAI() {
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
   };
 
-  // 💡 通常の単日AI相談（言い訳・カッコ書きでの常備品要約を完全撲滅したプロンプト）
+  // 💡 通常の単日AI相談（隠蔽サボり・常備品想定を根絶する最強プロンプト）
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -282,10 +282,11 @@ export default function BudgetBiteAI() {
       
       const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。
 
-【🚨絶対に守れ：常備品想定・言い訳要約の完全禁止ルール🚨】
-1. 「米や基本調味料（塩、醤油、油など）は常備品として想定しています」といったような、カッコ書きや文章による注意書き、言い訳、まとめ書きでの省略行為を一切禁止します。
-2. 料理に少しでも使用するものは、米、塩、コショウ、油、醤油、砂糖、みりん、酒、中華だしの素、鶏ガラスープの素、にんにく・生姜チューブに至るまで、すべて「1個の独立した箇ろ書きの項目（- 項目名）」として買い物リストに書き出してください。
-3. リスト内に「（その他〜は常備品とします）」のような、ユーザーの手間を省くふりをした手抜き記述を発見した場合は不合格とします。すべてバラして箇条書きにしてください。
+【🚨🚨最重要：常備品の隠蔽・省略を絶対に許さない死守ルール🚨🚨】
+1. あなたは「常備品をリストに書かないサボり癖」があります。それを今ここで完全に捨ててください。
+2. 献立の調理手順の中で、1滴でも1つまみでも使用する調味料や主食（塩、コショウ、砂糖、醤油、みりん、酒、酢、サラダ油、ごま油、鶏ガラスープの素、だしの素、味噌、ポン酢、マヨネーズ、ケチャップ、にんにくチューブ、生姜チューブ、そして【米】）は、すべて例外なく1つずつ独立した「- 項目名」として買い物リストに出しなさい。
+3. 「これは家にあるだろう」と勝手に判断してリストから消去（隠蔽）することを固く禁じます。手順に出てくるものはすべてチェックボックス付きのリスト項目として白日の下に晒してください。
+4. カッコ書きでの言い訳（例：「その他定番調味料は〜」など）も一切認めません。見つけたら即座にエラーとみなします。
 
 【目標日】${targetDateStr}
 【冷蔵庫にある余り物】${stock}
@@ -294,15 +295,15 @@ export default function BudgetBiteAI() {
 【出力フォーマット】
 ### ${targetDateStr} の献立計画
 **メニュー名**
-・手順やコツをここに簡潔に書く
+・手順やコツをここに簡潔に書く（ここで使う調味料や米は、下のリストに全て漏れなく連動させること）
 
 ## 🛒 買い物リスト
 ### 【肉・魚類】
 - 食材名
 ### 【野菜・その他】
-- 食材名（米を消費するなら「- 米」もここに独立した項目として必ず載せること。常備品想定での省略・言い訳書きは厳禁）
+- 食材名（米を食べる・使う場合は必ず「- 米」をここに載せること）
 ### 【調味料】
-- 調味料名（塩、油、醤油、砂糖、みりん、酒、その他すべての使用調味料を、一切の文章による常備品言い訳なしで、すべて1行ずつの箇条書きで完全に分離して出力すること）`;
+- 調味料名（塩、油、醤油、砂糖、みりん、酒、ガラスープなど、調理手順に登場するすべての調味料を「絶対に1つも隠さず」1行ずつの箇条書きで全件出力すること）`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -315,7 +316,7 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 💡 週一括プランニング機能（言い訳・カッコ書きでの常備品要約を完全撲滅したプロンプト）
+  // 💡 週一括プランニング機能（隠蔽サボり・常備品想定を根絶する最強プロンプト）
   const askGeminiWeekly = async () => {
     const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
     if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
@@ -345,10 +346,11 @@ export default function BudgetBiteAI() {
       const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。
 不要な挨拶や説明は一切省き、指定フォーマットを厳密に守ってください。
 
-【🚨絶対に守れ：常備品想定・言い訳要約の完全禁止ルール🚨】
-1. 「米や基本調味料は常備品として想定しています」といったような、カッコ書きや文章による注意書き、言い訳、まとめ書きでの省略行為を一切禁止します。
-2. 計画内の料理で少しでも使用するものは、米、塩、コショウ、油、醤油、砂糖、みりん、酒、だしの素、中華スープの素、にんにくチューブ等、すべて「1個の独立した箇条書きの項目（- 項目名）」として買い物リストに合算して書き出してください。
-3. リスト内に「（その他定番調味料は常備品とします）」のような、手抜き・まとめ記述を入れることは絶対に厳禁とします。すべてバラして1行ずつ箇条書きにしてください。
+【🚨🚨最重要：常備品の隠蔽・省略を絶対に許さない死守ルール🚨🚨】
+1. あなたは「常備品をリストに書かないサボり癖」があります。それを今ここで完全に捨ててください。
+2. すべての日の調理手順の中で、1滴でも1つまみでも使用する調味料や主食（塩、コショウ、砂糖、醤油、みりん、酒、酢、サラダ油、ごま油、鶏ガラスープの素、だしの素、味噌、ポン酢、マヨネーズ、ケチャップ、にんにくチューブ、生姜チューブ、そして【米】）は、すべて例外なく1つずつ独立した「- 項目名」として合計買い物リストに合算して出しなさい。
+3. 「家にあるだろう」という勝手な判断によるリストからの消去（隠蔽）は絶対に厳禁。
+4. カッコ書きでの言い訳（例：「その他定番調味料は〜」など）も一切認めません。
 
 【計画対象日】${targetDaysLine}
 【冷蔵庫にある余り物】${stock}
@@ -363,9 +365,9 @@ export default function BudgetBiteAI() {
 ### 【肉・魚類】
 - 食材名
 ### 【野菜・その他】
-- 食材名（米を消費するなら「- 米」もここに独立した項目として必ず載せること。常備品想定での省略・言い訳書きは厳禁）
+- 食材名（米を消費するなら必ず「- 米」をここに独立した項目として載せること）
 ### 【調味料】
-- 調味料名（使用する塩、醤油、油、その他すべての調味料を、一切の文章による常備品言い訳なしで、すべて1行ずつの箇条書きで完全に分離して羅列すること）`;
+- 調味料名（使用する塩、醤油、油、みりん、酒、砂糖、ガラスープ等、手順に出てくる全ての調味料を「絶対に1つも隠さず」1行ずつの箇条書きで全件出力すること）`;
 
       const result = await model.generateContent(prompt);
       const fullText = result.response.text();
@@ -397,7 +399,7 @@ export default function BudgetBiteAI() {
       setAiResponse(fullText);
       setArchivedMenu(fullText);
       setActiveTab('menu');
-      alert("選択した曜日すべての献立計画を一括作成したよ！常備品の言い訳カッコ書きを完全に排除したよ。");
+      alert("選択した曜日すべての献立計画を一括作成したよ！調味料や米の隠蔽サボりを完全に根絶したよ。");
       fetchBudgetData();
 
     } catch (err: any) { alert(err.message); }
@@ -461,7 +463,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.4</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.5</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
