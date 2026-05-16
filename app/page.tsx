@@ -24,7 +24,7 @@ export default function BudgetBiteAI() {
   // 表示するタブを管理するステート（'menu' = 献立, 'shopping' = 買い物リスト）
   const [activeTab, setActiveTab] = useState<'menu' | 'shopping'>('menu');
 
-  // Geminiの初期化 (最新の2.5-flashモデルを使用)
+  // Geminiの初期化 (最新の2.0-flashモデルを使用)
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -70,7 +70,7 @@ export default function BudgetBiteAI() {
   // 3. 出費を記録してSupabaseに保存する
   // ==========================================
   const addExpense = async (e: React.FormEvent) => {
-    e.preventDefault(); // ⭕️ タイポを修正（e. を追加）
+    e.preventDefault();
 
     const price = parseInt(expense);
     const name = itemName || "買い物";
@@ -254,10 +254,10 @@ export default function BudgetBiteAI() {
 
         {/* AIの回答表示エリア（タブ切り替え版） */}
         {aiResponse && (
-          <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-6 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="text-cyan-400 font-bold mb-4 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
+          <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="text-cyan-400 font-bold mb-3 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
             
-            {/* タブ選択ボタンの配置 (⭕️ 後端を削除完了) */}
+            {/* タブ選択ボタンの配置 */}
             <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button 
                 type="button"
@@ -275,14 +275,63 @@ export default function BudgetBiteAI() {
               </button>
             </div>
 
-            {/* テキスト表示エリア（最大高さを決めてスクロール可能に） */}
-            <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap max-h-[450px] overflow-y-auto pr-2 font-light">
+            {/* 表示エリア */}
+            <div className="text-gray-300 text-sm leading-relaxed max-h-[400px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
-                // 買い物リストより前の部分（献立）を切り出して表示
-                aiResponse.split('## 🛒 買い物リスト')[0]
+                // 【献立タブ】普通にスクロール表示
+                <div className="whitespace-pre-wrap">{aiResponse.split('## 🛒 買い物リスト')[0]}</div>
               ) : (
-                // 買い物リスト以降の部分（買い物リスト＋コツ＋応援メッセージ）を表示
-                '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '')
+                // 【買い物リストタブ】2列のコンパクト表示に変換
+                <div className="space-y-4">
+                  {(() => {
+                    const shoppingText = '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '');
+                    const lines = shoppingText.split('\n');
+                    
+                    let currentSection = "";
+                    const sections: { title: string; items: string[] }[] = [];
+                    let lastSectionIndex = -1;
+
+                    lines.forEach(line => {
+                      const trimmed = line.trim();
+                      if (!trimmed) return;
+
+                      // 見出し（### 【肉類・魚介類】など）を見つけたら新しいセクションにする
+                      if (trimmed.startsWith('###') || trimmed.startsWith('##')) {
+                        currentSection = trimmed.replace(/###|##/g, '').trim();
+                        sections.push({ title: currentSection, items: [] });
+                        lastSectionIndex = sections.length - 1;
+                      } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
+                        // 箇条書きのアイテムを追加
+                        const itemText = trimmed.replace(/^[\*\-\s]+/, '').trim();
+                        if (lastSectionIndex >= 0) {
+                          sections[lastSectionIndex].items.push(itemText);
+                        }
+                      } else {
+                        // 説明文などの普通のテキスト
+                        if (lastSectionIndex >= 0 && sections[lastSectionIndex].items.length === 0 && !sections[lastSectionIndex].title.includes('🛒')) {
+                          // セクション直下の説明文を無視するか、必要ならタイトルにマージ等
+                        } else if (lastSectionIndex >= 0) {
+                          sections[lastSectionIndex].items.push(trimmed);
+                        }
+                      }
+                    });
+
+                    return sections.map((sec, idx) => (
+                      <div key={idx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                        <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
+                        {/* スマホ用に2列（grid-cols-2）のコンパクト配置 */}
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          {sec.items.map((item, i) => (
+                            <div key={i} className="bg-zinc-950/60 border border-zinc-800/40 rounded-lg px-2.5 py-2 text-gray-300 flex items-start gap-1">
+                              <span className="text-cyan-600 font-bold">・</span>
+                              <span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
               )}
             </div>
           </div>
