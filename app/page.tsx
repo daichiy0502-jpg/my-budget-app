@@ -20,8 +20,11 @@ export default function BudgetBiteAI() {
   const [history, setHistory] = useState<{ id: string, name: string, price: number, date: string }[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
+  
+  // 表示するタブを管理するステート（'menu' = 献立, 'shopping' = 買い物リスト）
+  const [activeTab, setActiveTab] = useState<'menu' | 'shopping'>('menu');
 
-  // Geminiの初期化
+  // Geminiの初期化 (最新の2.5-flashモデルを使用)
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -33,56 +36,54 @@ export default function BudgetBiteAI() {
   }, []);
 
   const fetchBudgetData = async () => {
-    // データベースから作成日時が新しい順（降順）でデータを取得
-    const { data, error } = await supabase
-      .from('budgets')
-      .select('*')
-      .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('budgets')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error("データ取得エラー:", error);
-      return;
-    }
+      if (error) {
+        console.error("データ取得エラー:", error);
+        return;
+      }
 
-    if (data && data.length > 0) {
-      // 一番最新のレコードから「残り予算」を画面にセット
-      setBudget(data[0].budget_amount);
-      
-      // 金額が入っている履歴だけを抽出して画面の一覧用に整形
-      const formattedHistory = data
-        .filter(item => item.expense_price > 0)
-        .map(item => ({
-          id: item.id,
-          name: item.item_name || "買い物",
-          price: item.expense_price,
-          date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
-                new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-        }));
-      setHistory(formattedHistory);
+      if (data && data.length > 0) {
+        setBudget(data[0].budget_amount);
+        
+        const formattedHistory = data
+          .filter(item => item.expense_price > 0)
+          .map(item => ({
+            id: item.id,
+            name: item.item_name || "買い物",
+            price: item.expense_price,
+            date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
+                  new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          }));
+        setHistory(formattedHistory);
+      }
+    } catch (e) {
+      console.error("データ取得中に例外発生:", e);
     }
   };
 
- // ==========================================
-  // 3. 出費を記録してSupabaseに保存する（デバッグ版）
+  // ==========================================
+  // 3. 出費を記録してSupabaseに保存する
   // ==========================================
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("記録ボタンが押されたよ！入力値:", { itemName, expense });
 
     const price = parseInt(expense);
     const name = itemName || "買い物";
 
     if (isNaN(price) || price <= 0) {
-      alert("金額を正しく入力してね！入力された値: " + expense);
+      alert("金額を正しく入力してね！");
       return;
     }
 
     const newBudget = budget - price;
-    console.log("Supabaseに送信を開始します...", { budget_amount: newBudget, item_name: name, expense_price: price });
 
     try {
-      // Supabaseの「budgets」テーブルにデータを1行挿入
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('budgets')
         .insert([{
           budget_amount: newBudget,
@@ -91,27 +92,20 @@ export default function BudgetBiteAI() {
           stock_items: stock,
           user_request: userRequest,
           ai_response: aiResponse
-        }])
-        .select(); // 挿入されたデータを念のため受け取る
+        }]);
 
       if (error) {
-        console.error("Supabaseのインサートでエラー発生:", error);
         alert("Supabaseへの保存に失敗しました: " + error.message);
         return;
       }
 
-      console.log("Supabaseへの保存が成功したよ！返ってきたデータ:", data);
-
-      // データベースへの保存が成功したら画面を更新
       setBudget(newBudget);
-      await fetchBudgetData(); // 最新の履歴リストを再読込
+      await fetchBudgetData();
       setExpense("");
       setItemName("");
-      alert("保存に成功したよ！画面を更新します。");
 
     } catch (err) {
       console.error("プログラム実行中に重大なエラー:", err);
-      alert("キャッチされたエラー: " + err);
     }
   };
 
@@ -120,18 +114,16 @@ export default function BudgetBiteAI() {
   // ==========================================
   const resetData = async () => {
     if (confirm("データをリセットして、今月の予算を¥25,000に戻しますか？（過去のデータはすべて消去されます）")) {
-      // Supabaseから全データを削除
       const { error } = await supabase
         .from('budgets')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // 全件削除のための条件
+        .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (error) {
         alert("リセットに失敗しました: " + error.message);
         return;
       }
 
-      // 画面の状態も初期化
       setBudget(25000);
       setAiResponse("");
       setHistory([]);
@@ -146,21 +138,19 @@ export default function BudgetBiteAI() {
     setLoading(true);
     try {
       const prompt = `あなたは節約料理のプロです。現在の食費の残り予算は ${budget} 円です。
-      
-      【冷蔵庫に余っている食材】
-      ${stock || "特になし"}
-
-      【だいちゃんからのリクエスト】
-      「${userRequest}」
-
+      【冷蔵庫に余っている食材】\n${stock || "特になし"}
+      【だいちゃんからのリクエスト】\n「${userRequest}」
       これらを考慮して、予算内で最高に美味しい献立と、不足している食材の買い物リストを作成してください。
+      
+      【出力のルール】
+      買い物リストのセクションの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
       最後にだいちゃんへの温かい応援メッセージも添えて、綺麗で見やすいマークダウン形式で回答してね。`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       setAiResponse(text);
+      setActiveTab('menu'); // 新しい提案が来たら、まずは「献立」タブを表示する
 
-      // AIの回答が生成されたら、最新の予算状態と一緒にSupabaseへ追加保存する
       await supabase
         .from('budgets')
         .insert([{
@@ -262,11 +252,39 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* AIの回答表示エリア */}
+        {/* AIの回答表示エリア（タブ切り替え版） */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-6 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-cyan-400 font-bold mb-4 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
-            <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{aiResponse}</div>
+            
+            {/* タブ選択ボタンの配置 */}
+            <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800后端">
+              <button 
+                type="button"
+                onClick={() => setActiveTab('menu')}
+                className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'menu' ? 'bg-cyan-600 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                📅 1週間の献立
+              </button>
+              <button 
+                type="button"
+                onClick={() => setActiveTab('shopping')}
+                className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'shopping' ? 'bg-cyan-600 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                🛒 買い物リスト
+              </button>
+            </div>
+
+            {/* テキスト表示エリア（最大高さを決めてスクロール可能に） */}
+            <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap max-h-[450px] overflow-y-auto pr-2 font-light">
+              {activeTab === 'menu' ? (
+                // 買い物リストより前の部分（献立）を切り出して表示
+                aiResponse.split('## 🛒 買い物リスト')[0]
+              ) : (
+                // 買い物リスト以降の部分（買い物リスト＋コツ＋応援メッセージ）を表示
+                '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '')
+              )}
+            </div>
           </div>
         )}
 
