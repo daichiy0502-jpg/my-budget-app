@@ -62,19 +62,27 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // ==========================================
-  // 3. 出費を記録してSupabaseに保存する
+ // ==========================================
+  // 3. 出費を記録してSupabaseに保存する（デバッグ版）
   // ==========================================
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("記録ボタンが押されたよ！入力値:", { itemName, expense });
+
     const price = parseInt(expense);
     const name = itemName || "買い物";
 
-    if (!isNaN(price) && price > 0) {
-      const newBudget = budget - price;
+    if (isNaN(price) || price <= 0) {
+      alert("金額を正しく入力してね！入力された値: " + expense);
+      return;
+    }
 
+    const newBudget = budget - price;
+    console.log("Supabaseに送信を開始します...", { budget_amount: newBudget, item_name: name, expense_price: price });
+
+    try {
       // Supabaseの「budgets」テーブルにデータを1行挿入
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('budgets')
         .insert([{
           budget_amount: newBudget,
@@ -83,18 +91,27 @@ export default function BudgetBiteAI() {
           stock_items: stock,
           user_request: userRequest,
           ai_response: aiResponse
-        }]);
+        }])
+        .select(); // 挿入されたデータを念のため受け取る
 
       if (error) {
-        alert("データの保存に失敗しました: " + error.message);
+        console.error("Supabaseのインサートでエラー発生:", error);
+        alert("Supabaseへの保存に失敗しました: " + error.message);
         return;
       }
+
+      console.log("Supabaseへの保存が成功したよ！返ってきたデータ:", data);
 
       // データベースへの保存が成功したら画面を更新
       setBudget(newBudget);
       await fetchBudgetData(); // 最新の履歴リストを再読込
       setExpense("");
       setItemName("");
+      alert("保存に成功したよ！画面を更新します。");
+
+    } catch (err) {
+      console.error("プログラム実行中に重大なエラー:", err);
+      alert("キャッチされたエラー: " + err);
     }
   };
 
