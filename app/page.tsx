@@ -70,7 +70,7 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
-      // 🛒 2. 買い物リスト（調味料含む）のパース
+      // 🛒 2. 買い物リスト（食材・調味料）のパース
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
@@ -83,6 +83,7 @@ export default function BudgetBiteAI() {
         const trimmed = lines[lineIdx].trim();
         if (!trimmed) continue;
         
+        // 見出し（### 【肉・魚類】や### 【常備しておきたい調味料】など）を確実に拾う
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
@@ -91,9 +92,8 @@ export default function BudgetBiteAI() {
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
           
-          // 強力なノイズフィルター
-          if (itemNameClean.length > 0 && itemNameClean.length < 30 && 
-              !itemNameClean.startsWith('だいちゃん') && !itemNameClean.includes('がんば') && !itemNameClean.includes('応援')) {
+          // 純粋に文字が入っていれば、調味料も含めてすべてボタン化する
+          if (itemNameClean.length > 0 && itemNameClean.length < 40) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
           }
         }
@@ -152,17 +152,47 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 📝 プロンプトを完全にデータ出力用に最適化。調味料を絶対に出すように強制。
-      const prompt = `あなたは節約料理のプロです。【1週間の買い出し3500円程度】の献立データを作成してください。
-      【条件】平日多忙、帰宅後の「爆速時短簡単レシピ(10〜15分)」。冷蔵庫の余り:${stock || "特なし"}、リクエスト:${userRequest}
-      
-      【出力フォーマットの厳守ルール】
-      1. 各曜日見出しは「### 月曜日」の形式にすること。
-      2. 「**メニュー名**」の下に「・ステップ1…」とレシピ手順を書くこと。
-      3. 献立の後に、必ず「## 🛒 買い物リスト」という行を1行だけ作ること。
-      4. 食材は「### 【肉・魚類】」や「### 【野菜・その他】」などの見出しの下に「- 食材名」の形式でリスト化すること。
-      5. 【重要】料理に必要な塩、醤油、みりん、油などの調味料は、省略せずに必ず「### 【常備しておきたい調味料】」という見出しを独立して作り、その下に「- 調味料名」の形式で一文字も漏らさず全てリストアップすること。
-      6. 「だいちゃんへ」などの応援メッセージ、挨拶、締めの言葉、余計なアドバイス文は一切出力せず、純粋な上記のデータのみで終了させてください。`;
+      // 🌟 AIに変な命令の解釈をさせないよう、超ストレートに出力順だけを指定するプロンプト
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+
+【条件】
+・予算：1週間の買い出し総額3500円程度
+・ターゲット：平日の夜に時間がなくてもパパッと作れる時短レシピ（調理時間10〜15分）
+・冷蔵庫の余り食材：${stock || "特になし"}
+・個別のリクエスト：${userRequest}
+
+【出力フォーマット（必ずこの順番で、過不足なく出力すること）】
+
+### 月曜日
+**メニュー名**
+・手順をここに書く
+
+### 火曜日
+**メニュー名**
+・手順をここに書く
+
+### 水曜日
+**メニュー名**
+・手順をここに書く
+
+### 木曜日
+**メニュー名**
+・手順をここに書く
+
+### 金曜日
+**メニュー名**
+・手順をここに書く
+
+## 🛒 買い物リスト
+
+### 【肉・魚類】
+- 食材名
+
+### 【野菜・その他】
+- 食材名
+
+### 【常備しておきたい調味料】
+- 今回の料理で使う、必要なすべての調味料（塩、醤油、砂糖、みりん、油、マヨネーズ、ポン酢、にんにくチューブなど、必要なものを一文字も漏らさず全て箇条書きで出力してください）`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
