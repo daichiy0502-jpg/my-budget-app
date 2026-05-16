@@ -13,20 +13,29 @@ interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; }
 
 type ActiveTabType = 'menu' | 'shopping';
+// 💡 モードの型定義
+type CookingModeType = '通常' | '時短' | '贅沢';
 
-// 📅 曜日の定義
 const DAYS_OF_WEEK = ['月', '火', '水', '木', '金', '土', '日'];
 
 export default function BudgetBiteAI() {
+  // 💡 初期設定予算を管理（初期値は25000、localStorageから復元）
+  const [baseBudget, setBaseBudget] = useState<number>(25000);
+  const [isEditingBaseBudget, setIsEditingBaseBudget] = useState(false);
+  const [inputBaseBudget, setInputBaseBudget] = useState("");
+
   const [budget, setBudget] = useState(25000);
   const [itemName, setItemName] = useState("");
   const [expense, setExpense] = useState("");
   const [stock, setStock] = useState(""); 
-  const [userRequest, setUserRequest] = useState("1週間3500円程度で、平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
+  const [userRequest, setUserRequest] = useState("平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
   
-  // 📅 選択された曜日を管理するステート（初期値は月〜金）
   const [selectedDays, setSelectedDays] = useState<string[]>(['月', '火', '水', '木', '金']);
-  
+  // 💡 曜日ごとのモードを管理するオブジェクト（初期値はすべて「通常」）
+  const [dayModes, setDayModes] = useState<Record<string, CookingModeType>>({
+    '月': '通常', '火': '通常', '水': '通常', '木': '通常', '金': '通常', '土': '通常', '日': '通常'
+  });
+
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,7 +46,20 @@ export default function BudgetBiteAI() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPrice, setEditingPrice] = useState<string>("");
 
-  useEffect(() => { fetchBudgetData(); }, []);
+  // 💡 コンポーネント読み込み時にlocalStorageから初期予算を復元
+  useEffect(() => {
+    const savedBase = localStorage.getItem('budgetbite_base_budget');
+    if (savedBase) {
+      const parsed = parseInt(savedBase);
+      if (!isNaN(parsed)) setBaseBudget(parsed);
+    }
+    fetchBudgetData();
+  }, []);
+
+  // 💡 baseBudgetが変更されたら残高を再計算する
+  useEffect(() => {
+    fetchBudgetData();
+  }, [baseBudget]);
 
   useEffect(() => {
     if (!aiResponse) {
@@ -101,7 +123,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').trim();
             
             if (itemNameClean.length > 0 && itemNameClean.length < 20) {
               parsedSections[currentSectionIdx].items.push({ 
@@ -119,12 +141,18 @@ export default function BudgetBiteAI() {
     } catch (e) { console.error(e); }
   }, [aiResponse]);
 
+  // 💡 設定されたbaseBudgetを基準に引き算を行う
   const fetchBudgetData = async () => {
     try {
       const { data } = await supabase.from('budgets').select('*').order('created_at', { ascending: false });
       if (data) {
         const totalExpense = data.reduce((sum, item) => sum + (item.expense_price || 0), 0);
-        setBudget(25000 - totalExpense);
+        
+        // 基準予算から引く
+        const currentSavedBase = localStorage.getItem('budgetbite_base_budget');
+        const activeBase = currentSavedBase ? parseInt(currentSavedBase) : baseBudget;
+        setBudget(activeBase - totalExpense);
+
         setHistory(data.filter(item => item.expense_price > 0).map((item): HistoryItem => ({
           id: item.id, name: item.item_name || "買い物", price: item.expense_price,
           date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
@@ -158,10 +186,9 @@ export default function BudgetBiteAI() {
   const resetData = async () => {
     if (!confirm("リセットする？")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); }
+    if (!error) { setAiResponse(""); setHistory([]); setStock(""); fetchBudgetData(); }
   };
 
-  // 📅 曜日選択を切り替える関数
   const toggleDay = (day: string) => {
     if (selectedDays.includes(day)) {
       if (selectedDays.length === 1) return alert("最低でも1日は曜日を選んでね！");
@@ -171,6 +198,20 @@ export default function BudgetBiteAI() {
     }
   };
 
+  // 💡 曜日ごとのモードを切り替える関数
+  const handleModeChange = (day: string, mode: CookingModeType) => {
+    setDayModes(prev => ({ ...prev, [day]: mode }));
+  };
+
+  // 💡 設定予算を保存する関数
+  const saveBaseBudget = () => {
+    const parsed = parseInt(inputBaseBudget);
+    if (isNaN(parsed) || parsed < 0) return alert("正しい予算額を入力してね！");
+    setBaseBudget(parsed);
+    localStorage.setItem('budgetbite_base_budget', parsed.toString());
+    setIsEditingBaseBudget(false);
+  };
+
   const askGemini = async () => {
     if (selectedDays.length === 0) return alert("献立を作成する曜日をどれか選んでね！");
     setLoading(true);
@@ -178,7 +219,15 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 📅 選択された曜日からプロンプトのフォーマットを自動生成
+      // 📅 曜日ごとの個別指示プロンプトの組み立て
+      const dayDirectives = selectedDays.map(d => {
+        const mode = dayModes[d];
+        let directive = "バランスの良い通常メニュー";
+        if (mode === '時短') directive = "調理時間10分以内で、爆速かつ超簡単に片付けができる超時短メニュー";
+        if (mode === '贅沢') directive = "予算を少し多めに割いて良いので、1週間のご褒美になるような満足感の高い少し贅沢なメニュー";
+        return `・${d}曜日：${directive}`;
+      }).join('\n');
+
       const formatDaysPrompt = selectedDays.map(d => `### ${d}曜日\n**メニュー名**\n・手順をここに書く`).join('\n\n');
       
       const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、指定された曜日の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
@@ -186,10 +235,13 @@ export default function BudgetBiteAI() {
 
 【条件】
 ・献立を作成する曜日：${selectedDays.map(d => `${d}曜日`).join(', ')}（※指定されたこれ以外の曜日は出力に含めないでください）
-・予算：選択された日数に見合う適切な総額（1週間フルなら3500円程度を目安に、日数が少なければその分安く）
-・ターゲット：平日の夜に時間がなくてもパパッと作れる時短レシピ（調理時間10〜15分）
+
+【各曜日の料理モード指定】
+${dayDirectives}
+
+・予算：選択された日数と各曜日のモード（贅沢など）を考慮した適切な総額
 ・冷蔵庫の余り食材：${stock || "特になし"}
-・個別のリクエスト：${userRequest}
+・個別リクエスト：${userRequest}
 
 【出力フォーマット】
 
@@ -236,13 +288,32 @@ ${formatDaysPrompt}
         <h1 className="text-4xl font-bold text-cyan-400 tracking-tight italic">BudgetBite <span className="text-xs bg-cyan-900 text-cyan-200 px-2 py-0.5 rounded-full not-italic">AI</span></h1>
       </header>
       <main className="max-w-md mx-auto space-y-6">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center">
+        
+        {/* 💳 予算管理カード（設定予算の編集機能付き） */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center relative group">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-1 font-bold">Remaining Budget</p>
           <div className="text-5xl font-mono text-white my-2 font-bold">¥{budget.toLocaleString()}</div>
+          
+          <div className="text-[10px] text-gray-500 font-mono mt-1 flex items-center justify-center gap-1">
+            {isEditingBaseBudget ? (
+              <div className="flex items-center gap-1 bg-black p-1 rounded border border-zinc-800 z-10">
+                <input type="number" value={inputBaseBudget} onChange={(e) => setInputBaseBudget(e.target.value)} className="w-20 bg-zinc-900 text-white text-center rounded border border-zinc-700 font-mono py-0.5 text-xs" placeholder="25000" autoFocus />
+                <button type="button" onClick={saveBaseBudget} className="text-green-400 font-bold px-1 text-[11px]">OK</button>
+                <button type="button" onClick={() => setIsEditingBaseBudget(false)} className="text-gray-500 px-1 text-[11px]">✕</button>
+              </div>
+            ) : (
+              <>
+                <span>(基準予算: ¥{baseBudget.toLocaleString()})</span>
+                <button type="button" onClick={() => { setIsEditingBaseBudget(true); setInputBaseBudget(baseBudget.toString()); }} className="text-cyan-600 hover:text-cyan-400 font-bold text-[11px]">✏️設定</button>
+              </>
+            )}
+          </div>
+
           <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
-            <div className="bg-cyan-500 h-full transition-all" style={{ width: `${Math.max(0, (budget/25000)*100)}%` }}></div>
+            <div className="bg-cyan-500 h-full transition-all" style={{ width: `${Math.max(0, (budget/baseBudget)*100)}%` }}></div>
           </div>
         </div>
+
         <form onSubmit={addExpense} className="space-y-2 bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800">
           <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500" />
           <div className="flex gap-2">
@@ -250,16 +321,29 @@ ${formatDaysPrompt}
             <button className="bg-white text-black px-6 py-3 rounded-xl font-bold">記録</button>
           </div>
         </form>
+
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
           
-          {/* 📅 曜日選択用UIを追加（トグルボタン風） */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-gray-400 block">📅 献立を作成する曜日</label>
-            <div className="flex gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+          {/* 📅 曜日・こだわりモード選択用UI */}
+          <div className="space-y-3">
+            <label className="text-xs font-bold text-gray-400 block">📅 献立の曜日とこだわりモード</label>
+            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 bg-zinc-950 p-2 rounded-2xl border border-zinc-900">
               {DAYS_OF_WEEK.map(day => {
                 const isSelected = selectedDays.includes(day);
                 return (
-                  <button key={day} type="button" onClick={() => toggleDay(day)} className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${isSelected ? 'bg-cyan-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}>{day}</button>
+                  <div key={day} className={`flex items-center justify-between p-1.5 rounded-xl border transition-all ${isSelected ? 'bg-zinc-900/60 border-zinc-800' : 'bg-transparent border-transparent opacity-40'}`}>
+                    {/* 曜日ON/OFFボタン */}
+                    <button type="button" onClick={() => toggleDay(day)} className={`px-3 py-1.5 rounded-lg font-bold text-xs ${isSelected ? 'bg-cyan-900 text-cyan-300 border border-cyan-800/40' : 'bg-zinc-900 text-gray-600'}`}>{day}曜</button>
+                    
+                    {/* モード切り替え（3択スライド風） */}
+                    {isSelected && (
+                      <div className="flex gap-0.5 bg-black p-0.5 rounded-lg border border-zinc-800/60">
+                        {(['通常', '時短', '贅沢'] as CookingModeType[]).map(mode => (
+                          <button key={mode} type="button" onClick={() => handleModeChange(day, mode)} className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${dayModes[day] === mode ? 'bg-zinc-800 text-white border border-zinc-700/60 shadow-sm' : 'text-gray-600 hover:text-gray-400'}`}>{mode}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -269,6 +353,7 @@ ${formatDaysPrompt}
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none focus:border-cyan-500" />
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">{loading ? "Geminiが考え中..." : "AIコンシェルジュに相談する"}</button>
         </div>
+
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
             {history.slice(0, 5).map(item => (
@@ -292,6 +377,7 @@ ${formatDaysPrompt}
             ))}
           </div>
         )}
+
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
