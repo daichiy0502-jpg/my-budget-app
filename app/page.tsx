@@ -38,12 +38,16 @@ export default function BudgetBiteAI() {
     try {
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
+
+      // 💌 1. パースを始める前に、応援メッセージ部分を後ろから根こそぎカットして隔離
       const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
+        // 元のテキストからメッセージ部分を完全に消し去ることでリストへの混入を防ぎます
         cleanedResponse = aiResponse.replace(msgMatch[0], "").trim();
       }
 
+      // 📅 2. 献立テキストの曜日分解
       const menuPart = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
       const menuLines = menuPart.split('\n');
       const parsedDays: MenuDay[] = [];
@@ -76,6 +80,7 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
+      // 🛒 3. 買い物リスト（調味料含む）のパース
       const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); setSupportMessage(extractedMsg); return; }
       
@@ -87,6 +92,7 @@ export default function BudgetBiteAI() {
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
         const trimmed = lines[lineIdx].trim();
         if (!trimmed) continue;
+        
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【'));
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
@@ -94,13 +100,16 @@ export default function BudgetBiteAI() {
           currentSection = { title: `【${cleanTitle}】`, items: [] };
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
-          if (itemNameClean.length > 0 && itemNameClean.length < 40) {
+          // 空っぽのチェックボックスやゴミ、応援メッセージの残骸（だいちゃんへ等）が絶対に混入しないようにガード
+          if (itemNameClean.length > 0 && itemNameClean.length < 40 && !itemNameClean.startsWith('だいちゃん')) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
           }
         }
       }
       if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
       setShoppingSections(parsedSections);
+      
+      // 💌 4. 抽出しておいた応援メッセージを画面用のステートにセット
       setSupportMessage(extractedMsg);
     } catch (e) { console.error(e); }
   }, [aiResponse]);
@@ -225,12 +234,12 @@ export default function BudgetBiteAI() {
           </div>
         )}
         {aiResponse && (
-          <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
             <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-xs ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 曜日別の献立</button>
               <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-xs ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
             </div>
-            <div className="text-gray-300 text-sm max-h-[460px] overflow-y-auto pr-1">
+            <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
               {activeTab === 'menu' ? (
                 <div className="space-y-4">
                   {menuDays.length > 0 ? (
@@ -245,7 +254,6 @@ export default function BudgetBiteAI() {
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
-                  {supportMessage && <div className="mt-6 bg-zinc-950 border border-dashed border-cyan-900/60 p-4 rounded-2xl text-cyan-300 font-medium whitespace-pre-wrap text-xs">💡 {supportMessage.replace(/^【応援メッセージ】/i, '').trim()}</div>}
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -271,6 +279,18 @@ export default function BudgetBiteAI() {
                 </div>
               )}
             </div>
+
+            {/* 💌 タブの外側（一番下）の空いているスペースに応援メッセージを独立表示！ */}
+            {supportMessage && (
+              <div className="mt-4 bg-gradient-to-br from-zinc-950 to-zinc-900 border border-cyan-950 rounded-2xl p-4 shadow-inner">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <span className="text-cyan-400 text-xs font-bold">✨ AIからのエール</span>
+                </div>
+                <p className="text-xs text-cyan-100/90 leading-relaxed whitespace-pre-wrap">
+                  {supportMessage.replace(/^【応援メッセージ】|^応援メッセージ:?/i, '').trim()}
+                </p>
+              </div>
+            )}
           </div>
         )}
         <div className="text-center pt-8"><button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold">Reset Data</button></div>
