@@ -12,7 +12,7 @@ interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; }
 
-// だいちゃんが作ってくれた3タブの型
+// タブの型に応援メッセージ用の 'support' を追加
 type ActiveTabType = 'menu' | 'shopping' | 'support';
 
 export default function BudgetBiteAI() {
@@ -24,7 +24,7 @@ export default function BudgetBiteAI() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActiveTabType>('menu');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('menu'); // 型を変更
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
   const [activeDay, setActiveDay] = useState<string>("");
@@ -42,9 +42,8 @@ export default function BudgetBiteAI() {
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
 
-      // 💌 1. 応援メッセージ部分をさらに厳格にマッチングさせて根こそぎカット
-      // 改行が含まれていても、テキストの末尾に登場するメッセージを綺麗に丸ごと捕まえます
-      const msgMatch = aiResponse.match(/([\n\s]*だいちゃんへ[\s\S]*|[\n\s]*【応援メッセージ】[\s\S]*|[\n\s]*応援メッセージ:?[\s\S]*)$/i);
+      // 💌 1. 応援メッセージ部分を後ろから根こそぎカットして隔離
+      const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
         cleanedResponse = aiResponse.replace(msgMatch[0], "").trim();
@@ -96,6 +95,7 @@ export default function BudgetBiteAI() {
         const trimmed = lines[lineIdx].trim();
         if (!trimmed) continue;
         
+        // 見出し判定（### 【肉・魚類】 や ### 【常備しておきたい調味料】 などに対応）
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
@@ -103,10 +103,8 @@ export default function BudgetBiteAI() {
           currentSection = { title: `【${cleanTitle}】`, items: [] };
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
-          
-          // 強力ガード：空文字、長すぎる文字、および「だいちゃん」や「応援」から始まる行はリストに追加しない
-          if (itemNameClean.length > 0 && itemNameClean.length < 40 && 
-              !itemNameClean.startsWith('だいちゃん') && !itemNameClean.startsWith('応援')) {
+          // ゴミや応援メッセージの残骸が混入しないようにガード
+          if (itemNameClean.length > 0 && itemNameClean.length < 40 && !itemNameClean.startsWith('だいちゃん')) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
           }
         }
@@ -114,6 +112,7 @@ export default function BudgetBiteAI() {
       if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
       setShoppingSections(parsedSections);
       
+      // 💌 4. 抽出しておいた応援メッセージを画面用のステートにセット
       setSupportMessage(extractedMsg);
     } catch (e) { console.error(e); }
   }, [aiResponse]);
@@ -239,6 +238,7 @@ export default function BudgetBiteAI() {
         )}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
+            {/* タブボタンを3つに拡張 */}
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
               <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物</button>
@@ -287,6 +287,7 @@ export default function BudgetBiteAI() {
                 </div>
               )}
 
+              {/* 新設：応援メッセージ用タブコンテンツ */}
               {activeTab === 'support' && (
                 <div className="bg-gradient-to-br from-zinc-950 to-zinc-900 border border-cyan-950 rounded-2xl p-4 shadow-inner min-h-[150px]">
                   <div className="flex items-center gap-1.5 mb-2.5">
