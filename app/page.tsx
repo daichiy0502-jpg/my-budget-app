@@ -38,8 +38,8 @@ export default function BudgetBiteAI() {
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
 
-  // 📅 週一括プランニング用の選択曜日ステータス (日〜土、trueなら対象)
-  const [selectedWeekDays, setSelectedWeekDays] = useState<boolean[]>([false, true, true, true, true, true, false]); // デフォルト平日
+  // 📅 週一括プランニング用の選択曜日ステータス (日〜土)
+  const [selectedWeekDays, setSelectedWeekDays] = useState<boolean[]>([false, true, true, true, true, true, false]);
 
   // 🤖 AI・表示データ
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -106,8 +106,8 @@ export default function BudgetBiteAI() {
           parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
           currentSectionIdx = parsedSections.length - 1;
         } else if (currentSectionIdx >= 0 && /^[\s\-\*・\d\.]/.test(trimmed)) {
-          let name = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\processed*/g, '').trim();
-          if (name.length > 0 && name.length < 40) { // 一括買い物リスト用に少し文字数制限を拡張
+          let name = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+          if (name.length > 0 && name.length < 50) { 
             parsedSections[currentSectionIdx].items.push({ id: `item-${currentSectionIdx}-${lineIdx}`, name, checked: false, fridgeIn: false });
           }
         }
@@ -259,7 +259,7 @@ export default function BudgetBiteAI() {
   };
 
   const getStats = () => {
-    const categories: CategoryType[] = ['自炊', '外食', '買い食い', '会社の弁当', 'その他']
+    const categories: CategoryType[] = ['自炊', '外食', '買い食い', '会社の弁当', 'その他'];
     return categories.map(cat => {
       const sum = history.filter(h => h.name.includes(`[${cat}]`)).reduce((a, b) => a + b.price, 0);
       return { category: cat, total: sum };
@@ -272,14 +272,33 @@ export default function BudgetBiteAI() {
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
   };
 
-  // 💡 通常の単日AI相談
+  // 💡 通常の単日AI相談（調味料網羅版プロンプト）
   const askGemini = async () => {
     setLoading(true);
     try {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const targetDateStr = `${selectedYear}年${selectedMonth}月${selectedDay}日`;
-      const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。\n【目標日】${targetDateStr}\n【冷蔵庫にある余り物】${stock}\n【ユーザーからのリクエスト】${userRequest}\n\n【出力フォーマット】\n### ${targetDateStr} の献立計画\n**メニュー名**\n・手順やコツをここに簡潔に書く\n\n## 🛒 買い物リスト\n### 【肉・魚類】\n- 食材名\n### 【野菜・その他】\n- 食材名\n### 【調味料】\n- 調味料名`;
+      
+      const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。
+【超重要】調味料について、塩、コショウ、醤油、砂糖、サラダ油、みりん、酒、マヨネーズなど、どんなに基本家庭にあると思われる一般的なものであっても、調理に使用するものは【調味料】リストに一切省略せず必ず全て書き出してください。「家にあるものは省略」は絶対禁止です。
+
+【目標日】${targetDateStr}
+【冷蔵庫にある余り物】${stock}
+【ユーザーからのリクエスト】${userRequest}
+
+【出力フォーマット】
+### ${targetDateStr} の献立計画
+**メニュー名**
+・手順やコツをここに簡潔に書く
+
+## 🛒 買い物リスト
+### 【肉・魚類】
+- 食材名
+### 【野菜・その他】
+- 食材名
+### 【調味料】
+- 調味料名（塩、油、醤油なども必ず個別に全て載せること）`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -292,23 +311,19 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 💡 週一括プランニング機能のコプロジック
+  // 💡 週一括プランニング機能（調味料網羅版プロンプト）
   const askGeminiWeekly = async () => {
-    // 選択された曜日があるかチェック
     const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
     if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
 
     setLoading(true);
     try {
-      // 選択中カレンダーの日付を起点に、その属する「日曜日〜土曜日」の日付をマッピング
       const currentSelectedDate = new Date(selectedYear, selectedMonth - 1, selectedDay);
-      const currentDayOfWeek = currentSelectedDate.getDay(); // 0(日) ~ 6(土)
+      const currentDayOfWeek = currentSelectedDate.getDay(); 
       
-      // 今週の日曜日の日付を計算
       const sundayDate = new Date(currentSelectedDate);
       sundayDate.setDate(currentSelectedDate.getDate() - currentDayOfWeek);
 
-      // 各曜日の正確な日付文字列マップを作成
       const weekDatesMap = selectedIndexes.map(idx => {
         const d = new Date(sundayDate);
         d.setDate(sundayDate.getDate() + idx);
@@ -326,48 +341,42 @@ export default function BudgetBiteAI() {
       const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。
 不要な挨拶や説明は一切省き、指定フォーマットを厳密に守ってください。
 
+【超重要】調味料について、塩、コショウ、醤油、砂糖、サラダ油、ごま油、みりん、酒、マヨネーズ、ケチャップ、だしの素など、一般家庭に常備されていると思われる基本的なものであっても、調理に使用するものは【調味料】リストに一切省略せず完全に全て合算して書き出してください。「基本調味料は省略」は絶対に禁止します。
+
 【計画対象日】${targetDaysLine}
 【冷蔵庫にある余り物】${stock}
 【ユーザーからの要望】${userRequest}
 
 【出力フォーマット】
-(※対象となる日付ごとに以下のブロックを必ず作成してください)
 ### [日付文字列] の献立計画
 **メニュー名**
 ・手順やコツを簡潔に書く
 
-(※最後にすべての曜日分を合算した買い物リストを1つだけ作成してください)
 ## 🛒 買い物リスト
 ### 【肉・魚類】
 - 食材名
 ### 【野菜・その他】
 - 食材名
 ### 【調味料】
-- 調味料名`;
+- 調味料名（使用する塩、醤油、油なども漏れなくすべてリストアップすること）`;
 
       const result = await model.generateContent(prompt);
       const fullText = result.response.text();
 
-      // 各日付のブロックを正規表現等で切り分けて個別にSupabaseへ一括保存する
-      // まず全体の買い物リスト部分を抽出
       const shoppingPart = fullText.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
 
-      // 曜日ごとにパースして保存を実行
       for (const mapObj of weekDatesMap) {
-        // 例: 「### 2026年5月18日 の献立計画」から次の「###」の手前までを抜き出す
         const escapedDate = mapObj.dateStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`###\\s*${escapedDate}[\\s\\S]*?(?=###|##\\s*🛒|$)`, 'i');
         const match = fullText.match(regex);
         
-        let dayMenuText = `### ${mapObj.dateStr} の献立計画\n**一括プランニングメニュー**\n・詳細は全体の買い物リスト、または一括履歴を確認してね！`;
+        let dayMenuText = `### ${mapObj.dateStr} の献立計画\n**一括プランニングメニュー**\n・詳細は全体の買い物リストを確認してね！`;
         if (match && match[0]) {
           dayMenuText = match[0].trim();
         }
 
-        // 個々の日付データに、共通の買い物リストを結合して完全なフォーマットにする
         const finalDayResponse = `${dayMenuText}\n\n## 🛒 買い物リスト\n${shoppingPart}`;
 
-        // Supabaseにインサート
         await supabase.from('budgets').insert([{
           budget_amount: budget,
           item_name: `AI相談 (${mapObj.dateStr})`,
@@ -378,11 +387,10 @@ export default function BudgetBiteAI() {
         }]);
       }
 
-      // 画面上の表示を更新
       setAiResponse(fullText);
       setArchivedMenu(fullText);
       setActiveTab('menu');
-      alert("選択した曜日すべての献立計画を一括作成してカレンダーに保存したよ！");
+      alert("選択した曜日すべての献立計画を一括作成してカレンダーに保存したよ！調味料もフルカバーしてるよ。");
       fetchBudgetData();
 
     } catch (err: any) { alert(err.message); }
@@ -446,7 +454,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.0</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.1</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
@@ -467,7 +475,7 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 💰 出費入力 ＋ ⭐ お気に入り選択 */}
+        {/* 💰 出費入力 ＋ ⭐ お気に入り */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-3">
           <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900">
             {(['自炊', '外食', '買い食い', '会社の弁当'] as CategoryType[]).map(cat => (
@@ -480,7 +488,7 @@ export default function BudgetBiteAI() {
             <button type="submit" className="bg-white text-black px-4 rounded-xl font-bold text-xs">記録</button>
           </form>
 
-          {/* ⭐️ お気に入り登録・呼び出しエリア */}
+          {/* ⭐️ お気に入り登録・呼び出し */}
           <div className="pt-2 border-t border-zinc-900 space-y-2">
             <div className="flex justify-between items-center px-1">
               <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">よく行くお店（お気に入り選択）</p>
@@ -507,7 +515,7 @@ export default function BudgetBiteAI() {
         {/* 📅 カレンダー */}
         {renderMonthCalendar()}
 
-        {/* 🍽️ メニュー表示エリア */}
+        {/* 🍽️ メニュー表示 */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4">
           <div className="flex gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
             <button type="button" onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 選択日の献立</button>
@@ -579,7 +587,7 @@ export default function BudgetBiteAI() {
             </button>
           </div>
 
-          {/* 🗓️ 週一括用の曜日選択チェックボックス */}
+          {/* 🗓️ 週一括用の曜日選択 */}
           <div className="bg-black/40 p-3 rounded-2xl border border-zinc-900 space-y-2">
             <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest text-center">一括生成する対象の曜日を選択</p>
             <div className="flex justify-between gap-1">
