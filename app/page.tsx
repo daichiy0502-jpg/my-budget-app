@@ -96,7 +96,7 @@ export default function BudgetBiteAI() {
           if (isBulletPoint) {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
             
-            // 万が一のブレ防止ガードは残しつつ、純粋にボタン化するよ
+            // 20文字以上の余計な指示文や解説文が入ってきた場合はボタンにしないガード
             if (itemNameClean.length > 0 && itemNameClean.length < 20) {
               parsedSections[currentSectionIdx].items.push({ 
                 id: `item-${currentSectionIdx}-${lineIdx}`, 
@@ -161,8 +161,8 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 💡 応援メッセージを根本から完全に入れさせない鉄壁のプロンプト
-      const prompt = `あなたは優秀な節約料理 of プロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+      // 💡 調味料名がバラバラの1行ずつできちんと出力されるように指示を最適化！
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
 出力の最初から最後まで、フォーマット以外の挨拶、解説、応援メッセージなどの雑談は【絶対に】一切含めないでください。リストの直後で出力を即座に終了してください。
 
 【条件】
@@ -202,7 +202,10 @@ export default function BudgetBiteAI() {
 - 食材名
 
 ### 【調味料】
-- 食材名`;
+- 調味料名
+- 調味料名
+- 調味料名
+※解説や指示の文章はここに入れないで、純粋な調味料の名前だけを1行ずつ箇条書きにしてください。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
