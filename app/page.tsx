@@ -144,7 +144,7 @@ export default function BudgetBiteAI() {
       }
 
       // ------------------------------------------
-      // 🛒 3. 買い物リストのパース（シンプル＆強力版）
+      // 🛒 3. 買い物リストのパース（メッセージ混入ガード付き）
       // ------------------------------------------
       const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) {
@@ -158,16 +158,22 @@ export default function BudgetBiteAI() {
       
       const parsedSections: ShoppingSection[] = [];
       let currentSection: ShoppingSection | null = null;
+      let stopParsing = false; // メッセージ混入を防ぐフラグ
 
-      lines.forEach((line, lineIdx) => {
-        const trimmed = line.trim();
-        if (!trimmed) return;
+      for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+        const trimmed = lines[lineIdx].trim();
+        if (!trimmed || stopParsing) continue;
+
+        // もし「だいちゃんへ」などの応援メッセージ文脈が始まったら、リストのパースを強制終了
+        if (trimmed.startsWith('だいちゃん') || trimmed.includes('応援メッセージ')) {
+          stopParsing = true;
+          continue;
+        }
 
         // 見出し（### や **【セクション】**）の判定
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【'));
 
         if (isHeader) {
-          // もし前のセクションがあれば保存
           if (currentSection && currentSection.items.length > 0) {
             parsedSections.push(currentSection);
           }
@@ -177,7 +183,11 @@ export default function BudgetBiteAI() {
           // 箇条書き記号（-, *, ・）を綺麗に剥ぎ取る
           let itemNameClean = trimmed.replace(/^[\s\-\*・]+/, '').replace(/\*\*/g, '').trim();
           
-          // 短いテキスト、または「：」などを含んだ明確なアイテム行だけを拾う（長文メッセージの混入ガード）
+          // 「だいちゃんへ」のメッセージが記号なしで始まっていた場合のセーフティガード
+          if (itemNameClean.startsWith('だいちゃん') || itemNameClean.startsWith('これ一週間') || itemNameClean.startsWith('仕事で忙しい')) {
+            break; 
+          }
+
           if (itemNameClean.length > 0 && itemNameClean.length < 40) {
             currentSection.items.push({
               id: `item-${parsedSections.length}-${lineIdx}`,
@@ -186,7 +196,7 @@ export default function BudgetBiteAI() {
             });
           }
         }
-      });
+      }
 
       // 最後のセクションを回収
       if (currentSection && (currentSection as ShoppingSection).items.length > 0) {
