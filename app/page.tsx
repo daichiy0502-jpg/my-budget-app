@@ -204,7 +204,7 @@ export default function BudgetBiteAI() {
 ### 【野菜・その他】
 - 食材名
 
-### 【常備しておきたい調味料】
+### 【調味料】
 - 食材名`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
