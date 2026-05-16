@@ -70,42 +70,49 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
-      // 🛒 2. 買い物リストのパース（全材料でロジックを完全統一）
+      // 🛒 2. 買い物リストのパース（絶対に項目が消えない堅牢ロジック）
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
       const shoppingText = parts[1];
       const lines = shoppingText.split('\n');
       const parsedSections: ShoppingSection[] = [];
-      let currentSection: ShoppingSection | null = null;
+      
+      // いま編集しているセクションの配列インデックスを保持する
+      let currentSectionIdx = -1;
 
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
         const line = lines[lineIdx];
         const trimmed = line.trim();
         if (!trimmed) continue;
         
-        // 見出し（###）の判定
-        const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
+        // 見出しの判定（【 】が含まれていたら無条件で新しいセクションを作る）
+        const isHeader = trimmed.includes('【') && trimmed.includes('】');
         
         if (isHeader) {
-          if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
-          const cleanTitle = trimmed.replace(/###|##|#|\*\*|【|】/g, '').trim();
-          currentSection = { title: `【${cleanTitle}】`, items: [] };
-        } else if (currentSection) {
-          // 💡 ここで「肉」や「野菜」と同じ条件に揃える！
-          // AIが箇条書きのマーカー（-, ・, *, 1.など）を使っている行だけを「純粋な食材・調味料」としてパースする。
-          // これにより、マーカーのないただの応援メッセージや補足文は自動的に完全にスルーされる。
+          const cleanTitle = trimmed.replace(/###|##|#|\*\*|・|\-|【|】/g, '').trim();
+          // 💡 ここが最大の変更点：中身が空の段階で、即座に配列に追加する！これで項目が消えるのを絶対防ぐ
+          parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
+          currentSectionIdx = parsedSections.length - 1; // いま追加した末尾のインデックスを指す
+        } else if (currentSectionIdx >= 0) {
+          // 先頭が箇条書き記号（-, ・, *, 数字など）で始まっている行だけを具材として登録
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
             if (itemNameClean.length > 0 && itemNameClean.length < 40) {
-              currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
+              // 現在アクティブなセクションのitemsに直接プッシュする
+              parsedSections[currentSectionIdx].items.push({ 
+                id: `item-${currentSectionIdx}-${lineIdx}`, 
+                name: itemNameClean, 
+                checked: false 
+              });
             }
           }
         }
       }
-      if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
+      
+      // 💡 中身が完全に空っぽのセクションがあっても、項目（見出し）だけは残すためにそのままStateに入れる
       setShoppingSections(parsedSections);
       
     } catch (e) { console.error(e); }
@@ -159,7 +166,7 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+      const prompt = `あなたは優秀な節約料理 of プロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
 
 【条件】
 ・予算：1週間の買い出し総額3500円程度
@@ -212,7 +219,7 @@ export default function BudgetBiteAI() {
     return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\*/g, '')}</div>;
+        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\转/g, '').replace(/\*\*/g, '')}</div>;
       }
       if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
         return <div key={idx} className="text-xs text-gray-300 pl-4 py-0.5 bg-zinc-900/40 rounded my-0.5">{trimmed.replace(/^[\s・\-\d\.]+\s*/, '👉 ')}</div>;
@@ -300,16 +307,20 @@ export default function BudgetBiteAI() {
                     shoppingSections.map((sec, secIdx) => (
                       <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
                         <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          {sec.items.map((item, itemIdx) => (
-                            <button key={item.id} onClick={() => {
-                              const updated = [...shoppingSections]; updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; setShoppingSections(updated);
-                            }} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
-                              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
-                              <span className="truncate">{item.name}</span>
-                            </button>
-                          ))}
-                        </div>
+                        {sec.items.length > 0 ? (
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            {sec.items.map((item, itemIdx) => (
+                              <button key={item.id} onClick={() => {
+                                const updated = [...shoppingSections]; updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; setShoppingSections(updated);
+                              }} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                                <span className="truncate">{item.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500 italic pl-2">該当する項目がありませんでした。</div>
+                        )}
                       </div>
                     ))
                   ) : (
