@@ -272,7 +272,7 @@ export default function BudgetBiteAI() {
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
   };
 
-  // 💡 通常の単日AI相談（調味料網羅版プロンプト）
+  // 💡 通常の単日AI相談（調味料絶対網羅・ウルトラプロンプト）
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -281,7 +281,10 @@ export default function BudgetBiteAI() {
       const targetDateStr = `${selectedYear}年${selectedMonth}月${selectedDay}日`;
       
       const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。
-【超重要】調味料について、塩、コショウ、醤油、砂糖、サラダ油、みりん、酒、マヨネーズなど、どんなに基本家庭にあると思われる一般的なものであっても、調理に使用するものは【調味料】リストに一切省略せず必ず全て書き出してください。「家にあるものは省略」は絶対禁止です。
+
+【⚠️超最重要ルール：調味料は完全省略禁止⚠️】
+調理で使用する調味料は、どんなに基礎的で一般家庭に必ず常備されていると思われるものであっても、一切の省略をせず、全て【調味料】リストに載せてください。
+（例：塩、コショウ、醤油、砂糖、サラダ油、ごま油、酢、みりん、料理酒、マヨネーズ、ケチャップ、だしの素、めんつゆ、ポン酢、チューブのニンニクや生姜など、少しでも使うならすべて一文字たりとも省略せずにリストアップすること。「家にあるものは省略する」といった配慮や手抜きは絶対に許しません。）
 
 【目標日】${targetDateStr}
 【冷蔵庫にある余り物】${stock}
@@ -298,7 +301,7 @@ export default function BudgetBiteAI() {
 ### 【野菜・その他】
 - 食材名
 ### 【調味料】
-- 調味料名（塩、油、醤油なども必ず個別に全て載せること）`;
+- 調味料名（塩、油、醤油なども調理に使うものは一文字も省略せずすべて個別に載せること）`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -311,7 +314,7 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 💡 週一括プランニング機能（調味料網羅版プロンプト）
+  // 💡 週一括プランニング機能（調味料絶対網羅・ウルトラプロンプト）
   const askGeminiWeekly = async () => {
     const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
     if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
@@ -341,7 +344,9 @@ export default function BudgetBiteAI() {
       const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。
 不要な挨拶や説明は一切省き、指定フォーマットを厳密に守ってください。
 
-【超重要】調味料について、塩、コショウ、醤油、砂糖、サラダ油、ごま油、みりん、酒、マヨネーズ、ケチャップ、だしの素など、一般家庭に常備されていると思われる基本的なものであっても、調理に使用するものは【調味料】リストに一切省略せず完全に全て合算して書き出してください。「基本調味料は省略」は絶対に禁止します。
+【⚠️超最重要ルール：調味料は完全省略禁止⚠️】
+作成するすべての献立で消費する調味料は、一般家庭に常備されている定番のものであっても、一切省略せずに【調味料】リストへ合算して完全にすべて書き出してください。
+（例：塩、コショウ、醤油、砂糖、サラダ油、ごま油、酢、みりん、料理酒、マヨネーズ、ケチャップ、だしの素、コンソメ、鶏ガラスープの素、めんつゆ、にんにくチューブ等、レシピで少しでも使うものは必ずリストアップすること。「基本調味料は家にある前提で省略する」ことは絶対に厳禁とし、不合格とします。）
 
 【計画対象日】${targetDaysLine}
 【冷蔵庫にある余り物】${stock}
@@ -358,7 +363,7 @@ export default function BudgetBiteAI() {
 ### 【野菜・その他】
 - 食材名
 ### 【調味料】
-- 調味料名（使用する塩、醤油、油なども漏れなくすべてリストアップすること）`;
+- 調味料名（使用する塩、醤油、油、その他すべての調味料を漏れなく一文字も省略せず完全に羅列すること）`;
 
       const result = await model.generateContent(prompt);
       const fullText = result.response.text();
@@ -454,7 +459,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.1</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.2</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
@@ -614,7 +619,7 @@ export default function BudgetBiteAI() {
           ))}
         </div>
 
-        <div className="text-center pt-8"><button type="button" onClick={resetData} className="text-zinc-800 text-[9px] uppercase tracking-widest font-bold">Factory Reset</button></div>
+        <div className="text-center pt-8"><button type="button" onClick={resetData} className="text-zinc-800 text-[9px] uppercase tracking-widest font-bold">Factory Factory Reset</button></div>
       </main>
     </div>
   );
