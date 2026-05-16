@@ -10,13 +10,25 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+interface ShoppingItem {
+  id: string;
+  name: string;
+  checked: boolean;
+}
+
+interface ShoppingSection {
+  title: string;
+  items: ShoppingItem[];
+}
+
 export default function BudgetBiteAI() {
   // 状態管理（ステート）
   const [budget, setBudget] = useState(25000);
   const [itemName, setItemName] = useState("");
   const [expense, setExpense] = useState("");
   const [stock, setStock] = useState(""); 
-  const [userRequest, setUserRequest] = useState("1週間分の献立と買い物リストを教えて。");
+  // 🌟 初期表示のリクエスト文をはじめから「社会人・3500円時短仕様」に最適化したよ！
+  const [userRequest, setUserRequest] = useState("1週間3500円程度で、平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
   const [history, setHistory] = useState<{ id: string, name: string, price: number, date: string }[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,9 +36,12 @@ export default function BudgetBiteAI() {
   // 表示するタブを管理するステート（'menu' = 献立, 'shopping' = 買い物リスト）
   const [activeTab, setActiveTab] = useState<'menu' | 'shopping'>('menu');
 
-  // Geminiの初期化 (最新の2.0-flashモデルを使用)
+  // 🛒 買い物リストのチェック状態を管理するステート
+  const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
+
+  // Geminiの初期化 (最新 of 最新の 2.0-flashモデルを使用)
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   // ==========================================
   // 2. 起動時にSupabaseから過去のデータを自動読み込み
@@ -34,6 +49,51 @@ export default function BudgetBiteAI() {
   useEffect(() => {
     fetchBudgetData();
   }, []);
+
+  // AIの回答が更新されたら、買い物リストのオブジェクト構造をパースして生成する
+  useEffect(() => {
+    if (!aiResponse) {
+      setShoppingSections([]);
+      return;
+    }
+
+    const shoppingText = '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '');
+    const lines = shoppingText.split('\n');
+    
+    let currentSection = "";
+    const parsedSections: ShoppingSection[] = [];
+    let lastSectionIndex = -1;
+
+    lines.forEach((line, lineIdx) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      if (trimmed.startsWith('###') || trimmed.startsWith('##')) {
+        currentSection = trimmed.replace(/###|##/g, '').trim();
+        parsedSections.push({ title: currentSection, items: [] });
+        lastSectionIndex = parsedSections.length - 1;
+      } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
+        const itemText = trimmed.replace(/^[\*\-\s]+/, '').trim();
+        if (lastSectionIndex >= 0) {
+          parsedSections[lastSectionIndex].items.push({
+            id: `item-${lastSectionIndex}-${lineIdx}`,
+            name: itemText,
+            checked: false
+          });
+        }
+      } else {
+        if (lastSectionIndex >= 0 && parsedSections[lastSectionIndex].items.length > 0) {
+          parsedSections[lastSectionIndex].items.push({
+            id: `item-${lastSectionIndex}-${lineIdx}`,
+            name: trimmed,
+            checked: false
+          });
+        }
+      }
+    });
+
+    setShoppingSections(parsedSections);
+  }, [aiResponse]);
 
   const fetchBudgetData = async () => {
     try {
@@ -137,19 +197,24 @@ export default function BudgetBiteAI() {
   const askGemini = async () => {
     setLoading(true);
     try {
-      const prompt = `あなたは節約料理のプロです。現在の食費の残り予算は ${budget} 円です。
-      【冷蔵庫に余っている食材】\n${stock || "特になし"}
-      【だいちゃんからのリクエスト】\n「${userRequest}」
-      これらを考慮して、予算内で最高に美味しい献立と、不足している食材の買い物リストを作成してください。
+      const prompt = `あなたは社会人の味方であり、コスパとタイパ（タイムパフォーマンス）を極めた節約料理のプロです。
+      今回は【1週間分の買い出し金額の目安を「3500円程度」】にキッチリ収めた、最高に効率的な献立を提案してください。
+      
+      【だいちゃんの状況】
+      ・平日は仕事で忙しく、帰宅後に時間をかけずにサクッと作れる「爆速・時短・簡単レシピ（10〜15分で作れるもの）」を求めています。
+      ・冷蔵庫に余っている食材：${stock || "特になし"}
+      ・追加のリクエスト：「${userRequest}」
       
       【出力のルール】
-      買い物リストのセクションの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
-      最後にだいちゃんへの温かい応援メッセージも添えて、綺麗で見やすいマークダウン形式で回答してね。`;
+      1. 献立は、平日の夜の負担を極限まで減らす工夫（週末の作り置きや、平日の帰宅後でもワンパン・レンジで即できるものなど）を取り入れた1週間分を提案してください。
+      2. 買い物リストのセクションの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
+      3. 不足している食材を、買いまわりしやすいように「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で綺麗に出力してください。
+      4. 最後に、仕事を頑張るだいちゃんへの温かい応援メッセージを添えて、見やすいマークダウン形式で回答ね。`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
       setAiResponse(text);
-      setActiveTab('menu'); // 新しい提案が来たら、まずは「献立」タブを表示する
+      setActiveTab('menu'); 
 
       await supabase
         .from('budgets')
@@ -166,6 +231,13 @@ export default function BudgetBiteAI() {
       setAiResponse("エラーが発生しました。APIキーや環境変数の設定を確認してみてね。");
     }
     setLoading(false);
+  };
+
+  // 🛒 チェックボックスのON/OFFを切り替える関数
+  const toggleCheck = (sectionIdx: number, itemIdx: number) => {
+    const updated = [...shoppingSections];
+    updated[sectionIdx].items[itemIdx].checked = !updated[sectionIdx].items[itemIdx].checked;
+    setShoppingSections(updated);
   };
 
   // ==========================================
@@ -278,59 +350,39 @@ export default function BudgetBiteAI() {
             {/* 表示エリア */}
             <div className="text-gray-300 text-sm leading-relaxed max-h-[400px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
-                // 【献立タブ】普通にスクロール表示
                 <div className="whitespace-pre-wrap">{aiResponse.split('## 🛒 買い物リスト')[0]}</div>
               ) : (
-                // 【買い物リストタブ】2列のコンパクト表示に変換
                 <div className="space-y-4">
-                  {(() => {
-                    const shoppingText = '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '');
-                    const lines = shoppingText.split('\n');
-                    
-                    let currentSection = "";
-                    const sections: { title: string; items: string[] }[] = [];
-                    let lastSectionIndex = -1;
-
-                    lines.forEach(line => {
-                      const trimmed = line.trim();
-                      if (!trimmed) return;
-
-                      // 見出し（### 【肉類・魚介類】など）を見つけたら新しいセクションにする
-                      if (trimmed.startsWith('###') || trimmed.startsWith('##')) {
-                        currentSection = trimmed.replace(/###|##/g, '').trim();
-                        sections.push({ title: currentSection, items: [] });
-                        lastSectionIndex = sections.length - 1;
-                      } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
-                        // 箇条書きのアイテムを追加
-                        const itemText = trimmed.replace(/^[\*\-\s]+/, '').trim();
-                        if (lastSectionIndex >= 0) {
-                          sections[lastSectionIndex].items.push(itemText);
-                        }
-                      } else {
-                        // 説明文などの普通のテキスト
-                        if (lastSectionIndex >= 0 && sections[lastSectionIndex].items.length === 0 && !sections[lastSectionIndex].title.includes('🛒')) {
-                          // セクション直下の説明文を無視するか、必要ならタイトルにマージ等
-                        } else if (lastSectionIndex >= 0) {
-                          sections[lastSectionIndex].items.push(trimmed);
-                        }
-                      }
-                    });
-
-                    return sections.map((sec, idx) => (
-                      <div key={idx} className="border-b border-zinc-800/50 pb-3 last:border-0">
-                        <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                        {/* スマホ用に2列（grid-cols-2）のコンパクト配置 */}
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          {sec.items.map((item, i) => (
-                            <div key={i} className="bg-zinc-950/60 border border-zinc-800/40 rounded-lg px-2.5 py-2 text-gray-300 flex items-start gap-1">
-                              <span className="text-cyan-600 font-bold">・</span>
-                              <span>{item}</span>
+                  {shoppingSections.map((sec, secIdx) => (
+                    <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                      <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
+                      
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {sec.items.map((item, itemIdx) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => toggleCheck(secIdx, itemIdx)}
+                            className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 transition-all active:scale-95 ${
+                              item.checked 
+                                ? 'bg-zinc-900/20 border-zinc-800 text-gray-600 line-through decoration-zinc-700 decoration-1' 
+                                : 'bg-zinc-950/60 border-zinc-800/40 text-gray-300 hover:border-zinc-700'
+                            }`}
+                          >
+                            <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border transition-all flex-shrink-0 ${
+                              item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700 bg-zinc-900'
+                            }`}>
+                              {item.checked && <span className="text-[10px] text-cyan-400 font-bold">✓</span>}
                             </div>
-                          ))}
-                        </div>
+                            <span className="truncate">{item.name}</span>
+                          </button>
+                        ))}
                       </div>
-                    ));
-                  })()}
+                    </div>
+                  ))}
+                  {shoppingSections.length === 0 && (
+                    <p className="text-xs text-gray-500">買い物リストを読み込み中...</p>
+                  )}
                 </div>
               )}
             </div>
