@@ -26,7 +26,7 @@ export default function BudgetBiteAI() {
 
   // Geminiの初期化 (最新の2.5-flashモデルを使用)
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   // ==========================================
   // 2. 起動時にSupabaseから過去のデータを自動読み込み
@@ -70,7 +70,7 @@ export default function BudgetBiteAI() {
   // 3. 出費を記録してSupabaseに保存する
   // ==========================================
   const addExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault(); // ⭕️ タイポを修正（e. を追加）
 
     const price = parseInt(expense);
     const name = itemName || "買い物";
@@ -257,8 +257,8 @@ export default function BudgetBiteAI() {
           <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-6 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-cyan-400 font-bold mb-4 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
             
-            {/* タブ選択ボタンの配置 */}
-            <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800后端">
+            {/* タブ選択ボタンの配置 (⭕️ 後端を削除完了) */}
+            <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button 
                 type="button"
                 onClick={() => setActiveTab('menu')}
