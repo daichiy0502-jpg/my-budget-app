@@ -21,6 +21,11 @@ interface ShoppingSection {
   items: ShoppingItem[];
 }
 
+interface MenuDay {
+  day: string; // 「月」「火」「水」など
+  content: string; // その日の献立内容
+}
+
 export default function BudgetBiteAI() {
   // 状態管理（ステート）
   const [budget, setBudget] = useState(25000);
@@ -32,30 +37,93 @@ export default function BudgetBiteAI() {
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
   
-  // 表示するタブを管理するステート（'menu' = 献立, 'shopping' = 買い物リスト）
+  // 表示するメインタブ（'menu' = 献立, 'shopping' = 買い物リスト）
   const [activeTab, setActiveTab] = useState<'menu' | 'shopping'>('menu');
 
-  // 🛒 買い物リストのチェック状態を管理するステート
+  // 🛒 買い物リストの構造化データ
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
 
-  // Geminiの初期化
-  const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  // 📅 曜日ごとの献立データと、現在選択されている曜日タブ
+  const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
+  const [activeDay, setActiveDay] = useState<string>("");
+  // 💌 応援メッセージを格納するステート
+  const [supportMessage, setSupportMessage] = useState<string>("");
 
-  // ==========================================
-  // 2. 起動時にSupabaseから過去のデータを自動読み込み
-  // ==========================================
+  // Geminiの初期化（だいちゃん指定の 2.5 モデル）
+  const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5" });
+
+  // 起動時にSupabaseからデータを読み込み
   useEffect(() => {
     fetchBudgetData();
   }, []);
 
-  // AIの回答が更新されたら、買い物リストをパースする
+  // 🌟 AIの回答が更新されたら「曜日ごとの献立」と「買い物リスト」を同時に分解・パースする
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]);
+      setMenuDays([]);
+      setActiveDay("");
+      setSupportMessage("");
       return;
     }
 
+    // ------------------------------------------
+    // A. 献立テキストの曜日分解（チョキチョキ処理）
+    // ------------------------------------------
+    const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
+    const menuLines = menuPart.split('\n');
+    
+    const parsedDays: MenuDay[] = [];
+    let currentDayName = "";
+    let currentDayText: string[] = [];
+
+    const dayPatterns = [
+      { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
+      { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
+      { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
+      { name: "木", regex: /(木曜日|【木】|■木|###\s*木)/ },
+      { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
+      { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
+      { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
+    ];
+
+    menuLines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        if (currentDayName) currentDayText.push(line);
+        return;
+      }
+
+      // 曜日見出しのチェック
+      const foundDay = dayPatterns.find(p => p.regex.test(trimmed));
+
+      if (foundDay) {
+        // 前の曜日を保存
+        if (currentDayName && currentDayText.length > 0) {
+          parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+        }
+        currentDayName = foundDay.name;
+        currentDayText = [line]; // 見出しも含める
+      } else {
+        if (currentDayName) {
+          currentDayText.push(line);
+        }
+      }
+    });
+    // 最後の曜日を滑り込み保存
+    if (currentDayName && currentDayText.length > 0) {
+      parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+    }
+
+    setMenuDays(parsedDays);
+    if (parsedDays.length > 0) {
+      setActiveDay(parsedDays[0].day); // 最初の曜日（月など）を初期選択にする
+    }
+
+    // ------------------------------------------
+    // B. 買い物リスト & 応援メッセージのパース
+    // ------------------------------------------
     const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
     if (parts.length < 2) {
       setShoppingSections([]);
@@ -68,13 +136,17 @@ export default function BudgetBiteAI() {
     const parsedSections: ShoppingSection[] = [];
     let currentSection = "";
     let lastSectionIndex = -1;
+    let extractedMsg: string[] = [];
+    let isMsgZone = false;
 
     lines.forEach((line, lineIdx) => {
       let trimmed = line.trim();
       if (!trimmed) return;
 
-      // 買い物リストタブの中では応援メッセージの手前でパースを止める
-      if (trimmed.includes("だいちゃんへ") || trimmed.includes("応援メッセージ")) {
+      // 応援メッセージゾーンに入ったか判定
+      if (trimmed.includes("だいちゃんへ") || trimmed.includes("応援メッセージ") || isMsgZone) {
+        isMsgZone = true;
+        extractedMsg.push(line);
         return;
       }
 
@@ -109,8 +181,8 @@ export default function BudgetBiteAI() {
       }
     });
 
-    const filteredSections = parsedSections.filter(sec => sec.items.length > 0);
-    setShoppingSections(filteredSections);
+    setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
+    setSupportMessage(extractedMsg.join('\n').trim());
   }, [aiResponse]);
 
   const fetchBudgetData = async () => {
@@ -120,10 +192,7 @@ export default function BudgetBiteAI() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error("データ取得エラー:", error);
-        return;
-      }
+      if (error) return;
 
       if (data && data.length > 0) {
         setBudget(data[0].budget_amount);
@@ -140,11 +209,11 @@ export default function BudgetBiteAI() {
         setHistory(formattedHistory);
       }
     } catch (e) {
-      console.error("データ取得中に例外発生:", e);
+      console.error(e);
     }
   };
 
-  // 出費を記録
+  // 出費記録
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     const price = parseInt(expense);
@@ -170,7 +239,7 @@ export default function BudgetBiteAI() {
         }]);
 
       if (error) {
-        alert("Supabaseへの保存に失敗しました: " + error.message);
+        alert("保存に失敗しました: " + error.message);
         return;
       }
 
@@ -180,23 +249,19 @@ export default function BudgetBiteAI() {
       setItemName("");
 
     } catch (err) {
-      console.error("プログラム実行中に重大なエラー:", err);
+      console.error(err);
     }
   };
 
-  // データリセット
+  // データをリセット
   const resetData = async () => {
-    if (confirm("データをリセットして、今月の予算を¥25,000に戻しますか？（過去のデータはすべて消去されます）")) {
+    if (confirm("データをリセットして予算を¥25,000に戻しますか？")) {
       const { error } = await supabase
         .from('budgets')
         .delete()
         .neq('id', '00000000-0000-0000-0000-000000000000');
 
-      if (error) {
-        alert("リセットに失敗しました: " + error.message);
-        return;
-      }
-
+      if (error) return;
       setBudget(25000);
       setAiResponse("");
       setHistory([]);
@@ -204,23 +269,23 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // Gemini相談
+  // Geminiへ相談
   const askGemini = async () => {
     setLoading(true);
     try {
-      const prompt = `あなたは社会人の味方であり、コスパとタイパ（タイムパフォーマンス）を極めた節約料理のプロです。
-      今回は【1週間分の買い出し金額の目安を「3500円程度」】にキッチリ収めた、最高に効率的な献立を提案してください。
+      const prompt = `あなたは社会人の味方であり、コスパとタイパを極めた節約料理のプロです。
+      【1週間分の買い出し金額目安を「3500円程度」】に収めた、効率的な献立を提案してください。
       
       【だいちゃんの状況】
-      ・平日は仕事で忙しく、帰宅後に時間をかけずにサクッと作れる「爆速・時短・簡単レシピ（10〜15分で作れるもの）」を求めています。
-      ・冷蔵庫に余っている食材：${stock || "特になし"}
-      ・追加のリクエスト：「${userRequest}」
+      ・平日は仕事で忙しく、帰宅後に時間をかけずにサクッと作れる「爆速・時短・簡単レシピ（10〜15分）」を求めています。
+      ・冷蔵庫の余り：${stock || "特なし"}
+      ・リクエスト：「${userRequest}」
       
-      【出力のルール】
-      1. 献立は、平日の夜の負担を極限まで減らす工夫を取り入れた1週間分を提案してください。
-      2. 買い物リストのセクションの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
-      3. 不足している食材を、買いまわりしやすいように「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で綺麗に出力してください。
-      4. 最後に、仕事を頑張るだいちゃんへの温かい応援メッセージを添えて、見やすいマークダウン形式で回答してね。`;
+      【出力の絶対ルール】
+      1. 各曜日の献立の見出しは、必ず「### 月曜日」「### 火曜日」のように【曜日名】を明記して開始してください。
+      2. 買い物リストの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
+      3. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で出力してください。
+      4. 最後に必ず、仕事を頑張るだいちゃんへの温かい応援メッセージを添えてね。`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -244,14 +309,12 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // チェックON/OFF
   const toggleCheck = (sectionIdx: number, itemIdx: number) => {
     const updated = [...shoppingSections];
     updated[sectionIdx].items[itemIdx].checked = !updated[sectionIdx].items[itemIdx].checked;
     setShoppingSections(updated);
   };
 
-  // 画面表示
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
@@ -260,7 +323,7 @@ export default function BudgetBiteAI() {
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
-        {/* 残り予算表示 */}
+        {/* 残高表示 */}
         <div className="relative overflow-hidden bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-1 font-bold text-center">Remaining Budget</p>
           <div className="text-5xl font-mono text-white my-2 font-bold text-center">¥{budget.toLocaleString()}</div>
@@ -269,7 +332,7 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 出費記録フォーム */}
+        {/* 記録フォーム */}
         <form onSubmit={addExpense} className="space-y-2 bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800">
           <p className="text-[10px] text-gray-500 px-2 uppercase tracking-widest font-bold">Quick Expense Record</p>
           <input 
@@ -287,10 +350,9 @@ export default function BudgetBiteAI() {
           </div>
         </form>
 
-        {/* AI相談入力フォーム */}
+        {/* AIフォーム */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
           <p className="text-[10px] text-gray-500 px-2 uppercase tracking-widest font-bold">AI Consultation</p>
-          
           <div className="space-y-1">
             <label className="text-[10px] text-cyan-500 px-2 font-bold uppercase">余っている食材</label>
             <input 
@@ -299,7 +361,6 @@ export default function BudgetBiteAI() {
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500"
             />
           </div>
-
           <div className="space-y-1">
             <label className="text-[10px] text-cyan-500 px-2 font-bold uppercase">リクエスト内容</label>
             <textarea 
@@ -307,7 +368,6 @@ export default function BudgetBiteAI() {
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-500 min-h-[80px] resize-none"
             />
           </div>
-
           <button onClick={askGemini} disabled={loading}
             className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl active:scale-95 transition-all disabled:opacity-50"
           >
@@ -315,7 +375,7 @@ export default function BudgetBiteAI() {
           </button>
         </div>
 
-        {/* 最近の履歴 */}
+        {/* 履歴 */}
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800">
             <p className="text-[10px] text-gray-500 px-2 mb-2 uppercase tracking-widest font-bold">Recent History</p>
@@ -333,44 +393,74 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* AIの回答表示エリア */}
+        {/* AI結果表示 */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-cyan-400 font-bold mb-3 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
             
+            {/* メインタブ */}
             <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-              <button 
-                type="button"
-                onClick={() => setActiveTab('menu')}
+              <button type="button" onClick={() => setActiveTab('menu')}
                 className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'menu' ? 'bg-cyan-600 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
               >
-                📅 1週間の献立
+                📅 曜日別の献立
               </button>
-              <button 
-                type="button"
-                onClick={() => setActiveTab('shopping')}
+              <button type="button" onClick={() => setActiveTab('shopping')}
                 className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'shopping' ? 'bg-cyan-600 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
               >
                 🛒 買い物リスト
               </button>
             </div>
 
-            <div className="text-gray-300 text-sm leading-relaxed max-h-[400px] overflow-y-auto pr-1 font-light">
+            <div className="text-gray-300 text-sm leading-relaxed max-h-[420px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
-                // 🌟【修正箇所】献立タブでは、途中で切らずにGeminiの返答（応援メッセージ含む全文章）を丸ごと表示するよ！
-                <div className="whitespace-pre-wrap">{aiResponse}</div>
+                <div className="space-y-4">
+                  {/* 🌟 曜日切り替え子タブ (月〜日のボタン) */}
+                  {menuDays.length > 0 ? (
+                    <>
+                      <div className="flex justify-between gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
+                        {menuDays.map((md) => (
+                          <button
+                            key={md.day}
+                            type="button"
+                            onClick={() => setActiveDay(md.day)}
+                            className={`px-3 py-1.5 rounded-md font-bold text-xs transition-all flex-1 min-w-[36px] ${
+                              activeDay === md.day 
+                                ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' 
+                                : 'text-gray-500 hover:text-gray-300'
+                            }`}
+                          >
+                            {md.day}
+                          </button>
+                        ))}
+                      </div>
+                      
+                      {/* 現在の曜日のメニュー表示 */}
+                      <div className="whitespace-pre-wrap bg-zinc-950/40 border border-zinc-800/40 p-4 rounded-2xl text-xs md:text-sm">
+                        {menuDays.find(d => d.day === activeDay)?.content || "献立データを読み込み中..."}
+                      </div>
+                    </>
+                  ) : (
+                    // 曜日分解がまだない場合のフォールバック表示
+                    <div className="whitespace-pre-wrap">{menuPart}</div>
+                  )}
+
+                  {/* 💌 応援メッセージを常に一番下に表示 */}
+                  {supportMessage && (
+                    <div className="mt-6 border-t border-dashed border-zinc-800 pt-4 text-cyan-400 font-medium whitespace-pre-wrap text-xs">
+                      {supportMessage}
+                    </div>
+                  )}
+                </div>
               ) : (
+                /* 🛒 買い物リストタブ */
                 <div className="space-y-4">
                   {shoppingSections.map((sec, secIdx) => (
                     <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
                       <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                      
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         {sec.items.map((item, itemIdx) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => toggleCheck(secIdx, itemIdx)}
+                          <button key={item.id} type="button" onClick={() => toggleCheck(secIdx, itemIdx)}
                             className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 transition-all active:scale-95 ${
                               item.checked 
                                 ? 'bg-zinc-900/20 border-zinc-800 text-gray-600 line-through decoration-zinc-700 decoration-1' 
@@ -397,7 +487,7 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* データリセットボタン */}
+        {/* リセット */}
         <div className="text-center pt-8">
           <button onClick={resetData} className="text-zinc-800 text-[10px] hover:text-red-500 transition-colors uppercase tracking-[0.2em] font-bold">
             Reset Data
