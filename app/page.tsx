@@ -12,8 +12,8 @@ interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; }
 
-// タブの型に応援メッセージ用の 'support' を追加
-type ActiveTabType = 'menu' | 'shopping' | 'support';
+// タブはシンプルに「献立」と「買い物」の2つに戻します
+type ActiveTabType = 'menu' | 'shopping';
 
 export default function BudgetBiteAI() {
   const [budget, setBudget] = useState(25000);
@@ -24,11 +24,10 @@ export default function BudgetBiteAI() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActiveTabType>('menu'); // 型を変更
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('menu');
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
   const [activeDay, setActiveDay] = useState<string>("");
-  const [supportMessage, setSupportMessage] = useState<string>("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPrice, setEditingPrice] = useState<string>("");
 
@@ -36,21 +35,11 @@ export default function BudgetBiteAI() {
 
   useEffect(() => {
     if (!aiResponse) {
-      setShoppingSections([]); setMenuDays([]); setActiveDay(""); setSupportMessage(""); return;
+      setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
     }
     try {
-      let cleanedResponse = aiResponse;
-      let extractedMsg = "";
-
-      // 💌 1. 応援メッセージ部分を後ろから根こそぎカットして隔離
-      const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
-      if (msgMatch) {
-        extractedMsg = msgMatch[0].trim();
-        cleanedResponse = aiResponse.replace(msgMatch[0], "").trim();
-      }
-
-      // 📅 2. 献立テキストの曜日分解
-      const menuPart = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
+      // 📅 1. 献立テキストの曜日分解
+      const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
       const menuLines = menuPart.split('\n');
       const parsedDays: MenuDay[] = [];
       let currentDayName = "";
@@ -82,9 +71,9 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
-      // 🛒 3. 買い物リスト（調味料含む）のパース
-      const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
-      if (parts.length < 2) { setShoppingSections([]); setSupportMessage(extractedMsg); return; }
+      // 🛒 2. 買い物リスト（調味料含む）のパース
+      const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
+      if (parts.length < 2) { setShoppingSections([]); return; }
       
       const shoppingText = parts[1];
       const lines = shoppingText.split('\n');
@@ -95,7 +84,6 @@ export default function BudgetBiteAI() {
         const trimmed = lines[lineIdx].trim();
         if (!trimmed) continue;
         
-        // 見出し判定（### 【肉・魚類】 や ### 【常備しておきたい調味料】 などに対応）
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
@@ -103,8 +91,10 @@ export default function BudgetBiteAI() {
           currentSection = { title: `【${cleanTitle}】`, items: [] };
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
-          // ゴミや応援メッセージの残骸が混入しないようにガード
-          if (itemNameClean.length > 0 && itemNameClean.length < 40 && !itemNameClean.startsWith('だいちゃん')) {
+          
+          // メッセージ混入を防ぐための厳格ガード（念のため「だいちゃん」や挨拶系の文章は弾く）
+          if (itemNameClean.length > 0 && itemNameClean.length < 30 && 
+              !itemNameClean.startsWith('だいちゃん') && !itemNameClean.includes('がんば') && !itemNameClean.includes('応援')) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
           }
         }
@@ -112,8 +102,6 @@ export default function BudgetBiteAI() {
       if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
       setShoppingSections(parsedSections);
       
-      // 💌 4. 抽出しておいた応援メッセージを画面用のステートにセット
-      setSupportMessage(extractedMsg);
     } catch (e) { console.error(e); }
   }, [aiResponse]);
 
@@ -164,9 +152,19 @@ export default function BudgetBiteAI() {
     try {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const prompt = `あなたは社会人の味方、節約料理のプロです。【1週間の買い出し3500円程度】の献立にしてください。
-      【だいちゃんの状況】平日多忙、帰宅後の「爆速時短簡単レシピ(10〜15分)」。冷蔵庫の余り:${stock || "特なし"}、リクエスト:${userRequest}
-      【絶対ルール】1. 各曜日見出しは「### 月曜日」形式。2. 「**メニュー名**」の下に「・ステップ1…」と書く。3. 買い物リストの始まりは「## 🛒 買い物リスト」のみの行。4. 食材は「### 【肉・魚類】」などのカテゴリ見出しの下に「- 食材名」形式。後ろに余計な文字は残さない。5. 調味料は「### 【常備しておきたい調味料】」の下に「- 調味料名」。6. 最後に必ず改行後「【応援メッセージ】」の見出しを作り、その下に「だいちゃんへ」から始まる応援メッセージを添えること。`;
+      
+      // 💥 プロンプトから応援メッセージの指示を完全に削除し、「余計なコメントは書くな」と厳密に指定
+      const prompt = `あなたは社会人の味方、節約料理のプロです。【1週間の買い出し3500円程度】の献立データを作成してください。
+      【利用者の状況】平日多忙、帰宅後の「爆速時短簡単レシピ(10〜15分)」。冷蔵庫の余り:${stock || "特なし"}、リクエスト:${userRequest}
+      
+      【出力フォーマットの絶対ルール】
+      1. 前置きの挨拶や、末尾のまとめ・応援コメント・雑談は一切出力しないでください。純粋なデータのみを出力すること。
+      2. 各曜日見出しは「### 月曜日」形式にしてください。
+      3. 「**メニュー名**」の下に「・ステップ1…」とレシピを書いてください。
+      4. 買い物リストの始まりは「## 🛒 買い物リスト」のみの行にしてください。
+      5. 食材は「### 【肉・魚類】」「### 【野菜・その他】」などのカテゴリ見出しの下に「- 食材名」形式で並べてください。後ろに余計な説明文は付けないこと。
+      6. 必要となる調味料は「### 【常備しておきたい調味料】」という見出しを作り、その下に「- 調味料名」の形式でリストアップしてください。`;
+      
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
       setAiResponse(text); setActiveTab('menu');
@@ -179,7 +177,7 @@ export default function BudgetBiteAI() {
     return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\ Third party code formatting options... */, '').replace(/\*\*/g, '')}</div>;
+        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\*/g, '')}</div>;
       }
       if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
         return <div key={idx} className="text-xs text-gray-300 pl-4 py-0.5 bg-zinc-900/40 rounded my-0.5">{trimmed.replace(/^[\s・\-\d\.]+\s*/, '👉 ')}</div>;
@@ -238,11 +236,10 @@ export default function BudgetBiteAI() {
         )}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
-            {/* タブボタンを3つに拡張 */}
+            {/* タブを「献立」と「買い物」の2つにすっきり戻します */}
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
-              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物</button>
-              <button onClick={() => setActiveTab('support')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'support' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>✨ エール</button>
+              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
             </div>
             
             <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
@@ -284,18 +281,6 @@ export default function BudgetBiteAI() {
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "リストの読み込みに失敗しました。"}</div>
                   )}
-                </div>
-              )}
-
-              {/* 新設：応援メッセージ用タブコンテンツ */}
-              {activeTab === 'support' && (
-                <div className="bg-gradient-to-br from-zinc-950 to-zinc-900 border border-cyan-950 rounded-2xl p-4 shadow-inner min-h-[150px]">
-                  <div className="flex items-center gap-1.5 mb-2.5">
-                    <span className="text-cyan-400 text-xs font-bold">✨ AIからのエール</span>
-                  </div>
-                  <p className="text-xs text-cyan-100/90 leading-relaxed whitespace-pre-wrap">
-                    {supportMessage ? supportMessage.replace(/^【応援メッセージ】|^応援メッセージ:?/i, '').trim() : "ここにAIからの応援メッセージが表示されます。次の相談を楽しみにしているよ！"}
-                  </p>
                 </div>
               )}
             </div>
