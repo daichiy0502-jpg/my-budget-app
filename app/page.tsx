@@ -65,7 +65,7 @@ export default function BudgetBiteAI() {
     fetchBudgetData();
   }, []);
 
-  // 🌟 AIの回答が更新されたら「曜日ごとの献立」と「買い物リスト」を同時に分解・パースする
+  // 🌟 AIの回答が更新されたら「曜日ごとの献立」と「買い物リスト」を安全に分解する
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]);
@@ -75,121 +75,124 @@ export default function BudgetBiteAI() {
       return;
     }
 
-    // ------------------------------------------
-    // A. 献立テキストの曜日分解
-    // ------------------------------------------
-    const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
-    const menuLines = menuPart.split('\n');
-    
-    const parsedDays: MenuDay[] = [];
-    let currentDayName = "";
-    let currentDayText: string[] = [];
+    try {
+      // ------------------------------------------
+      // A. 献立テキストの曜日分解
+      // ------------------------------------------
+      const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
+      const menuLines = menuPart.split('\n');
+      
+      const parsedDays: MenuDay[] = [];
+      let currentDayName = "";
+      let currentDayText: string[] = [];
 
-    const dayPatterns = [
-      { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
-      { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
-      { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
-      { name: "木", regex: /(木曜日|【木】|■木|###\s*木)/ },
-      { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
-      { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
-      { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
-    ];
+      const dayPatterns = [
+        { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
+        { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
+        { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
+        { name: "木", regex: /(木曜日|【木】|■木|###\s*木)/ },
+        { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
+        { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
+        { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
+      ];
 
-    menuLines.forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        if (currentDayName) currentDayText.push(line);
+      menuLines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (currentDayName) currentDayText.push(line);
+          return;
+        }
+
+        const foundDay = dayPatterns.find(p => p.regex.test(trimmed));
+
+        if (foundDay) {
+          if (currentDayName && currentDayText.length > 0) {
+            parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+          }
+          currentDayName = foundDay.name;
+          currentDayText = [line]; 
+        } else {
+          if (currentDayName) {
+            currentDayText.push(line);
+          }
+        }
+      });
+      
+      if (currentDayName && currentDayText.length > 0) {
+        parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+      }
+
+      setMenuDays(parsedDays);
+      if (parsedDays.length > 0) {
+        setActiveDay(parsedDays[0].day); 
+      }
+
+      // ------------------------------------------
+      // B. 買い物リスト & 応援メッセージのパース
+      // ------------------------------------------
+      const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
+      if (parts.length < 2) {
+        setShoppingSections([]);
         return;
       }
+      
+      const shoppingText = parts[1];
+      const lines = shoppingText.split('\n');
+      
+      const parsedSections: ShoppingSection[] = [];
+      let currentSection = "";
+      let lastSectionIndex = -1;
+      const extractedMsg: string[] = [];
+      let isMsgZone = false;
 
-      // 曜日見出しのチェック
-      const foundDay = dayPatterns.find(p => p.regex.test(trimmed));
+      lines.forEach((line, lineIdx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
 
-      if (foundDay) {
-        // 前の曜日を保存
-        if (currentDayName && currentDayText.length > 0) {
-          parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+        if (trimmed.includes("だいちゃんへ") || trimmed.includes("応援メッセージ") || isMsgZone) {
+          isMsgZone = true;
+          extractedMsg.push(line);
+          return;
         }
-        currentDayName = foundDay.name;
-        currentDayText = [line]; 
-      } else {
-        if (currentDayName) {
-          currentDayText.push(line);
-        }
-      }
-    });
-    // 最後の曜日を保存
-    if (currentDayName && currentDayText.length > 0) {
-      parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
-    }
 
-    setMenuDays(parsedDays);
-    if (parsedDays.length > 0) {
-      setActiveDay(parsedDays[0].day); 
-    }
+        const isHeader = 
+          trimmed.startsWith('###') || 
+          trimmed.startsWith('##') || 
+          (trimmed.startsWith('**') && (trimmed.includes('【') || trimmed.includes('類') || trimmed.includes('リスト')));
 
-    // ------------------------------------------
-    // B. 買い物リスト & 応援メッセージのパース
-    // ------------------------------------------
-    const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
-    if (parts.length < 2) {
-      setShoppingSections([]);
-      return;
-    }
-    
-    const shoppingText = parts[1];
-    const lines = shoppingText.split('\n');
-    
-    const parsedSections: ShoppingSection[] = [];
-    let currentSection = "";
-    let lastSectionIndex = -1;
-    const extractedMsg: string[] = [];
-    let isMsgZone = false;
-
-    lines.forEach((line, lineIdx) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-
-      // 応援メッセージゾーンに入ったか判定
-      if (trimmed.includes("だいちゃんへ") || trimmed.includes("応援メッセージ") || isMsgZone) {
-        isMsgZone = true;
-        extractedMsg.push(line);
-        return;
-      }
-
-      const isHeader = 
-        trimmed.startsWith('###') || 
-        trimmed.startsWith('##') || 
-        (trimmed.startsWith('**') && trimmed.endsWith('**') && (trimmed.includes('【') || trimmed.includes('類')));
-
-      if (isHeader) {
-        currentSection = trimmed.replace(/###|##|\*\*/g, '').trim();
-        parsedSections.push({ title: currentSection, items: [] });
-        lastSectionIndex = parsedSections.length - 1;
-      } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
-        const itemText = trimmed.replace(/^[\*\-\s]+/, '').trim();
-        if (lastSectionIndex >= 0) {
-          parsedSections[lastSectionIndex].items.push({
-            id: `item-${lastSectionIndex}-${lineIdx}`,
-            name: itemText,
-            checked: false
-          });
-        }
-      } else {
-        if (lastSectionIndex >= 0) {
-          if (trimmed.length < 15 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立')) {
+        if (isHeader) {
+          currentSection = trimmed.replace(/###|##|\*\*/g, '').trim();
+          parsedSections.push({ title: currentSection, items: [] });
+          lastSectionIndex = parsedSections.length - 1;
+        } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
+          const itemText = trimmed.replace(/^[\*\-\s]+/, '').replace(/\*\*/g, '').trim();
+          if (lastSectionIndex >= 0) {
             parsedSections[lastSectionIndex].items.push({
               id: `item-${lastSectionIndex}-${lineIdx}`,
-              name: trimmed,
+              name: itemText,
               checked: false
             });
           }
+        } else {
+          if (lastSectionIndex >= 0) {
+            if (trimmed.length < 25 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立')) {
+              parsedSections[lastSectionIndex].items.push({
+                id: `item-${lastSectionIndex}-${lineIdx}`,
+                name: trimmed.replace(/\*\*/g, '').trim(),
+                checked: false
+              });
+            }
+          }
         }
-      }
-    });
+      });
 
-    setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
-    setSupportMessage(extractedMsg.join('\n').trim());
+      setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
+      setSupportMessage(extractedMsg.join('\n').trim());
+
+    } catch (parseError) {
+      // 💡 万が一パース内で想定外の記号等でクラッシュしても、絶対に画面を巻き添えにしない
+      console.error("パースエラーが発生しました。フォールバックします:", parseError);
+    }
   }, [aiResponse]);
 
   const fetchBudgetData = async () => {
@@ -296,6 +299,11 @@ export default function BudgetBiteAI() {
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
+      
+      if (!text) {
+        throw new Error("Geminiからの応答が空でした。");
+      }
+      
       setAiResponse(text);
       setActiveTab('menu'); 
 
@@ -310,8 +318,9 @@ export default function BudgetBiteAI() {
           ai_response: text
         }]);
 
-    } catch (error) {
-      setAiResponse("エラーが発生しました。APIキーや環境変数の設定を確認してみてね。");
+    } catch (error: any) {
+      console.error("Gemini API Error:", error);
+      setAiResponse(`APIエラーが発生しました。ログを確認してください。 (${error?.message || "Unknown"})`);
     }
     setLoading(false);
   };
@@ -448,7 +457,7 @@ export default function BudgetBiteAI() {
                       </div>
                     </>
                   ) : (
-                    // 曜日分解がまだない場合のフォールバック表示
+                    // 曜日分解が上手くいかなかった場合は、エラーにせず生テキストをそのまま全出しする（安全対策）
                     <div className="whitespace-pre-wrap">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
 
@@ -462,31 +471,35 @@ export default function BudgetBiteAI() {
               ) : (
                 /* 🛒 買い物リストタブ */
                 <div className="space-y-4">
-                  {shoppingSections.map((sec, secIdx) => (
-                    <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
-                      <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        {sec.items.map((item, itemIdx) => (
-                          <button key={item.id} type="button" onClick={() => toggleCheck(secIdx, itemIdx)}
-                            className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 transition-all active:scale-95 ${
-                              item.checked 
-                                ? 'bg-zinc-900/20 border-zinc-800 text-gray-600 line-through decoration-zinc-700 decoration-1' 
-                                : 'bg-zinc-950/60 border-zinc-800/40 text-gray-300 hover:border-zinc-700'
-                            }`}
-                          >
-                            <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border transition-all flex-shrink-0 ${
-                              item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700 bg-zinc-900'
-                            }`}>
-                              {item.checked && <span className="text-[10px] text-cyan-400 font-bold">✓</span>}
-                            </div>
-                            <span className="truncate">{item.name}</span>
-                          </button>
-                        ))}
+                  {shoppingSections.length > 0 ? (
+                    shoppingSections.map((sec, secIdx) => (
+                      <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                        <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          {sec.items.map((item, itemIdx) => (
+                            <button key={item.id} type="button" onClick={() => toggleCheck(secIdx, itemIdx)}
+                              className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 transition-all active:scale-95 ${
+                                item.checked 
+                                  ? 'bg-zinc-900/20 border-zinc-800 text-gray-600 line-through decoration-zinc-700 decoration-1' 
+                                  : 'bg-zinc-950/60 border-zinc-800/40 text-gray-300 hover:border-zinc-700'
+                              }`}
+                            >
+                              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border transition-all flex-shrink-0 ${
+                                item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700 bg-zinc-900'
+                              }`}>
+                                {item.checked && <span className="text-[10px] text-cyan-400 font-bold">✓</span>}
+                              </div>
+                              <span className="truncate">{item.name}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
+                    ))
+                  ) : (
+                    // 買い物リストのパースが漏れた場合も、生テキストを安全に出す
+                    <div className="whitespace-pre-wrap text-xs">
+                      {aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "買い物リストの読み込みに失敗しました。"}
                     </div>
-                  ))}
-                  {shoppingSections.length === 0 && (
-                    <p className="text-xs text-gray-500">買い物リストを読み込み中...</p>
                   )}
                 </div>
               )}
