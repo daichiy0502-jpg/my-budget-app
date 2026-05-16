@@ -60,7 +60,7 @@ export default function BudgetBiteAI() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPrice, setEditingPrice] = useState<string>("");
 
-  // Geminiの初期化（2.5-flashモデル）
+  // Geminiの初期化
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -81,19 +81,21 @@ export default function BudgetBiteAI() {
 
     try {
       // ------------------------------------------
-      // 💌 事前処理：応援メッセージの超強力な抽出
+      // 💌 1. 先に応援メッセージを完全に分離・隔離する
       // ------------------------------------------
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
       
+      // だいちゃんへのメッセージ部分を後ろから最優先で切り出す
       const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
-        cleanedResponse = aiResponse.replace(extractedMsg, "");
+        // 残りのテキストからメッセージ部分を削除して、パースの誤検知を防ぐ
+        cleanedResponse = aiResponse.replace(msgMatch[0], "");
       }
 
       // ------------------------------------------
-      // A. 献立テキストの曜日分解
+      // 📅 2. 献立テキストの曜日分解
       // ------------------------------------------
       const menuPart = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
       const menuLines = menuPart.split('\n');
@@ -144,7 +146,7 @@ export default function BudgetBiteAI() {
       }
 
       // ------------------------------------------
-      // B. 買い物リストのパース（⭐調味料・常備品対応の強化版）
+      // 🛒 3. 買い物リストのパース（調味料完全対応版）
       // ------------------------------------------
       const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) {
@@ -157,26 +159,25 @@ export default function BudgetBiteAI() {
       const lines = shoppingText.split('\n');
       
       const parsedSections: ShoppingSection[] = [];
-      let currentSection = "";
       let lastSectionIndex = -1;
 
       lines.forEach((line, lineIdx) => {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        // 🌟「調味料」や「常備」という単語が含まれる見出しも確実にキャッチできるように拡張
+        // セクション見出しの判定
         const isHeader = 
           trimmed.startsWith('###') || 
           trimmed.startsWith('##') || 
           (trimmed.startsWith('**') && (trimmed.includes('【') || trimmed.includes('類') || trimmed.includes('リスト') || trimmed.includes('調味料') || trimmed.includes('常備')));
 
         if (isHeader) {
-          currentSection = trimmed.replace(/###|##|\*\*/g, '').trim();
-          parsedSections.push({ title: currentSection, items: [] });
+          const sectionTitle = trimmed.replace(/###|##|\*\*|【|】/g, '').trim();
+          parsedSections.push({ title: `【${sectionTitle}】`, items: [] });
           lastSectionIndex = parsedSections.length - 1;
         } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
           const itemText = trimmed.replace(/^[\*\-\s]+/, '').replace(/\*\*/g, '').trim();
-          if (lastSectionIndex >= 0) {
+          if (lastSectionIndex >= 0 && itemText.length > 0) {
             parsedSections[lastSectionIndex].items.push({
               id: `item-${lastSectionIndex}-${lineIdx}`,
               name: itemText,
@@ -184,9 +185,10 @@ export default function BudgetBiteAI() {
             });
           }
         } else {
-          // 🌟「-」や「*」がなくても、見出しの下にあって文字数が多すぎない行（調味料など）を救出
-          if (lastSectionIndex >= 0) {
-            if (trimmed.length < 35 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立') && !trimmed.startsWith('※')) {
+          // 「-」マークが付いていなくても、見出しの下にある短い調味料などの行を救出
+          if (lastSectionIndex >= 0 && trimmed.length > 0 && trimmed.length < 30) {
+            // 注意書きやメッセージの残骸っぽいものは除外
+            if (!trimmed.startsWith('※') && !trimmed.startsWith('両親') && !trimmed.startsWith('この') && !trimmed.startsWith('だいちゃん')) {
               parsedSections[lastSectionIndex].items.push({
                 id: `item-${lastSectionIndex}-${lineIdx}`,
                 name: trimmed.replace(/\*\*/g, '').trim(),
@@ -197,7 +199,7 @@ export default function BudgetBiteAI() {
         }
       });
 
-      // 空っぽのセクションを除外してステートにセット
+      // 空のセクションを綺麗に除外してセット
       setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
       setSupportMessage(extractedMsg);
 
@@ -361,7 +363,7 @@ export default function BudgetBiteAI() {
       2. 曜日ごとの中身は、まず「**メニュー名**」を書き、その下に「・ステップ1… ・ステップ2…」のように簡単に行を変えて作り方を書いてください。
       3. 買い物リストの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
       4. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で出力してください。
-      5. もし独自の調味料などを使う場合は、「### 【常備調味料】」という見出しを作ってリストアップしてください。
+      5. この一週間の献立を作る上で【必要な調味料・常備品】（醤油、みりん、塩、コショウ、油など）は、漏れがないようにすべてリストアップし、必ず「### 【常備しておきたい調味料】」という見出しの下に箇条書き（「- 調味料名」形式）で書き出してください。
       6. 最後に必ず、「だいちゃんへ」から始まる温かい応援メッセージを添えてね。`;
       
       const result = await model.generateContent(prompt);
@@ -385,7 +387,7 @@ export default function BudgetBiteAI() {
 
     } catch (error: any) {
       console.error("Gemini API Error:", error);
-      setAiResponse(`APIエラーが発生しました。 (${error?.message || "Unknown"})`);
+      setAiResponse(`エラーが発生しました。APIキーや環境変数の設定を確認してみてね。`);
     }
     setLoading(false);
   };
@@ -574,7 +576,9 @@ export default function BudgetBiteAI() {
                       </div>
                     </>
                   ) : (
-                    <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
+                    <div className="whitespace-pre-wrap text-xs">
+                      {aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}
+                    </div>
                   )}
 
                   {/* 💌 応援メッセージ */}
