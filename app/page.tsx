@@ -22,8 +22,15 @@ interface ShoppingSection {
 }
 
 interface MenuDay {
-  day: string; // 「月」「火」「水」など
-  content: string; // その日の献立内容
+  day: string;
+  content: string;
+}
+
+interface HistoryItem {
+  id: string;
+  name: string;
+  price: number;
+  date: string;
 }
 
 export default function BudgetBiteAI() {
@@ -33,7 +40,7 @@ export default function BudgetBiteAI() {
   const [expense, setExpense] = useState("");
   const [stock, setStock] = useState(""); 
   const [userRequest, setUserRequest] = useState("1週間3500円程度で、平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
-  const [history, setHistory] = useState<{ id: string, name: string, price: number, date: string }[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
   
@@ -49,7 +56,7 @@ export default function BudgetBiteAI() {
   // 💌 応援メッセージを格納するステート
   const [supportMessage, setSupportMessage] = useState<string>("");
 
-  // Geminiの初期化（だいちゃん指定の 2.5 モデル）
+  // Geminiの初期化（2.5モデルを固定）
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.5" });
 
@@ -69,7 +76,7 @@ export default function BudgetBiteAI() {
     }
 
     // ------------------------------------------
-    // A. 献立テキストの曜日分解（チョキチョキ処理）
+    // A. 献立テキストの曜日分解
     // ------------------------------------------
     const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
     const menuLines = menuPart.split('\n');
@@ -104,21 +111,21 @@ export default function BudgetBiteAI() {
           parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
         }
         currentDayName = foundDay.name;
-        currentDayText = [line]; // 見出しも含める
+        currentDayText = [line]; 
       } else {
         if (currentDayName) {
           currentDayText.push(line);
         }
       }
     });
-    // 最後の曜日を滑り込み保存
+    // 最後の曜日を保存
     if (currentDayName && currentDayText.length > 0) {
       parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
     }
 
     setMenuDays(parsedDays);
     if (parsedDays.length > 0) {
-      setActiveDay(parsedDays[0].day); // 最初の曜日（月など）を初期選択にする
+      setActiveDay(parsedDays[0].day); 
     }
 
     // ------------------------------------------
@@ -136,11 +143,11 @@ export default function BudgetBiteAI() {
     const parsedSections: ShoppingSection[] = [];
     let currentSection = "";
     let lastSectionIndex = -1;
-    let extractedMsg: string[] = [];
+    const extractedMsg: string[] = [];
     let isMsgZone = false;
 
     lines.forEach((line, lineIdx) => {
-      let trimmed = line.trim();
+      const trimmed = line.trim();
       if (!trimmed) return;
 
       // 応援メッセージゾーンに入ったか判定
@@ -199,7 +206,7 @@ export default function BudgetBiteAI() {
         
         const formattedHistory = data
           .filter(item => item.expense_price > 0)
-          .map(item => ({
+          .map((item): HistoryItem => ({
             id: item.id,
             name: item.item_name || "買い物",
             price: item.expense_price,
@@ -415,7 +422,7 @@ export default function BudgetBiteAI() {
             <div className="text-gray-300 text-sm leading-relaxed max-h-[420px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
                 <div className="space-y-4">
-                  {/* 🌟 曜日切り替え子タブ (月〜日のボタン) */}
+                  {/* 曜日切り替え子タブ (月〜日のボタン) */}
                   {menuDays.length > 0 ? (
                     <>
                       <div className="flex justify-between gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
@@ -442,7 +449,7 @@ export default function BudgetBiteAI() {
                     </>
                   ) : (
                     // 曜日分解がまだない場合のフォールバック表示
-                    <div className="whitespace-pre-wrap">{menuPart}</div>
+                    <div className="whitespace-pre-wrap">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
 
                   {/* 💌 応援メッセージを常に一番下に表示 */}
