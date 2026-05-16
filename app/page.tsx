@@ -70,7 +70,7 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
-      // 🛒 2. 買い物リスト（食材・調味料）のパース
+      // 🛒 2. 買い物リストのパース（全材料でロジックを完全統一）
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
@@ -80,21 +80,28 @@ export default function BudgetBiteAI() {
       let currentSection: ShoppingSection | null = null;
 
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-        const trimmed = lines[lineIdx].trim();
+        const line = lines[lineIdx];
+        const trimmed = line.trim();
         if (!trimmed) continue;
         
-        // 見出し（### 【肉・魚類】や### 【常備しておきたい調味料】など）を確実に拾う
+        // 見出し（###）の判定
         const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
+        
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
           const cleanTitle = trimmed.replace(/###|##|#|\*\*|【|】/g, '').trim();
           currentSection = { title: `【${cleanTitle}】`, items: [] };
         } else if (currentSection) {
-          let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+          // 💡 ここで「肉」や「野菜」と同じ条件に揃える！
+          // AIが箇条書きのマーカー（-, ・, *, 1.など）を使っている行だけを「純粋な食材・調味料」としてパースする。
+          // これにより、マーカーのないただの応援メッセージや補足文は自動的に完全にスルーされる。
+          const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
-          // 純粋に文字が入っていれば、調味料も含めてすべてボタン化する
-          if (itemNameClean.length > 0 && itemNameClean.length < 40) {
-            currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
+          if (isBulletPoint) {
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+            if (itemNameClean.length > 0 && itemNameClean.length < 40) {
+              currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
+            }
           }
         }
       }
@@ -152,7 +159,6 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 🌟 AIに変な命令の解釈をさせないよう、超ストレートに出力順だけを指定するプロンプト
       const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
 
 【条件】
@@ -161,7 +167,7 @@ export default function BudgetBiteAI() {
 ・冷蔵庫の余り食材：${stock || "特になし"}
 ・個別のリクエスト：${userRequest}
 
-【出力フォーマット（必ずこの順番で、過不足なく出力すること）】
+【出力フォーマット】
 
 ### 月曜日
 **メニュー名**
@@ -192,7 +198,7 @@ export default function BudgetBiteAI() {
 - 食材名
 
 ### 【常備しておきたい調味料】
-- 今回の料理で使う、必要なすべての調味料（塩、醤油、砂糖、みりん、油、マヨネーズ、ポン酢、にんにくチューブなど、必要なものを一文字も漏らさず全て箇条書きで出力してください）`;
+- 今回の料理で使う、必要なすべての調味料（塩、醤油、砂糖、みりん、油、マヨネーズ、ポン酢、にんにくチューブなど、必要なものを箇条書きで出力してください）`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
