@@ -12,7 +12,6 @@ interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; }
 
-// タブはシンプルに「献立」と「買い物」の2つに戻します
 type ActiveTabType = 'menu' | 'shopping';
 
 export default function BudgetBiteAI() {
@@ -92,7 +91,7 @@ export default function BudgetBiteAI() {
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
           
-          // メッセージ混入を防ぐための厳格ガード（念のため「だいちゃん」や挨拶系の文章は弾く）
+          // 強力なノイズフィルター
           if (itemNameClean.length > 0 && itemNameClean.length < 30 && 
               !itemNameClean.startsWith('だいちゃん') && !itemNameClean.includes('がんば') && !itemNameClean.includes('応援')) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
@@ -153,17 +152,17 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 💥 プロンプトから応援メッセージの指示を完全に削除し、「余計なコメントは書くな」と厳密に指定
-      const prompt = `あなたは社会人の味方、節約料理のプロです。【1週間の買い出し3500円程度】の献立データを作成してください。
-      【利用者の状況】平日多忙、帰宅後の「爆速時短簡単レシピ(10〜15分)」。冷蔵庫の余り:${stock || "特なし"}、リクエスト:${userRequest}
+      // 📝 プロンプトを完全にデータ出力用に最適化。調味料を絶対に出すように強制。
+      const prompt = `あなたは節約料理のプロです。【1週間の買い出し3500円程度】の献立データを作成してください。
+      【条件】平日多忙、帰宅後の「爆速時短簡単レシピ(10〜15分)」。冷蔵庫の余り:${stock || "特なし"}、リクエスト:${userRequest}
       
-      【出力フォーマットの絶対ルール】
-      1. 前置きの挨拶や、末尾のまとめ・応援コメント・雑談は一切出力しないでください。純粋なデータのみを出力すること。
-      2. 各曜日見出しは「### 月曜日」形式にしてください。
-      3. 「**メニュー名**」の下に「・ステップ1…」とレシピを書いてください。
-      4. 買い物リストの始まりは「## 🛒 買い物リスト」のみの行にしてください。
-      5. 食材は「### 【肉・魚類】」「### 【野菜・その他】」などのカテゴリ見出しの下に「- 食材名」形式で並べてください。後ろに余計な説明文は付けないこと。
-      6. 必要となる調味料は「### 【常備しておきたい調味料】」という見出しを作り、その下に「- 調味料名」の形式でリストアップしてください。`;
+      【出力フォーマットの厳守ルール】
+      1. 各曜日見出しは「### 月曜日」の形式にすること。
+      2. 「**メニュー名**」の下に「・ステップ1…」とレシピ手順を書くこと。
+      3. 献立の後に、必ず「## 🛒 買い物リスト」という行を1行だけ作ること。
+      4. 食材は「### 【肉・魚類】」や「### 【野菜・その他】」などの見出しの下に「- 食材名」の形式でリスト化すること。
+      5. 【重要】料理に必要な塩、醤油、みりん、油などの調味料は、省略せずに必ず「### 【常備しておきたい調味料】」という見出しを独立して作り、その下に「- 調味料名」の形式で一文字も漏らさず全てリストアップすること。
+      6. 「だいちゃんへ」などの応援メッセージ、挨拶、締めの言葉、余計なアドバイス文は一切出力せず、純粋な上記のデータのみで終了させてください。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
@@ -236,7 +235,6 @@ export default function BudgetBiteAI() {
         )}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
-            {/* タブを「献立」と「買い物」の2つにすっきり戻します */}
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
               <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
