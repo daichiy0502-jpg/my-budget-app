@@ -144,7 +144,7 @@ export default function BudgetBiteAI() {
       }
 
       // ------------------------------------------
-      // B. 買い物リストのパース
+      // B. 買い物リストのパース（⭐調味料・常備品対応の強化版）
       // ------------------------------------------
       const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) {
@@ -164,10 +164,11 @@ export default function BudgetBiteAI() {
         const trimmed = line.trim();
         if (!trimmed) return;
 
+        // 🌟「調味料」や「常備」という単語が含まれる見出しも確実にキャッチできるように拡張
         const isHeader = 
           trimmed.startsWith('###') || 
           trimmed.startsWith('##') || 
-          (trimmed.startsWith('**') && (trimmed.includes('【') || trimmed.includes('類') || trimmed.includes('リスト')));
+          (trimmed.startsWith('**') && (trimmed.includes('【') || trimmed.includes('類') || trimmed.includes('リスト') || trimmed.includes('調味料') || trimmed.includes('常備')));
 
         if (isHeader) {
           currentSection = trimmed.replace(/###|##|\*\*/g, '').trim();
@@ -183,9 +184,9 @@ export default function BudgetBiteAI() {
             });
           }
         } else {
+          // 🌟「-」や「*」がなくても、見出しの下にあって文字数が多すぎない行（調味料など）を救出
           if (lastSectionIndex >= 0) {
-            if (trimmed.length < 25 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立')) {
-              // 🌟【修正】タイポのあった箇所の正規表現をきれいに修正
+            if (trimmed.length < 35 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立') && !trimmed.startsWith('※')) {
               parsedSections[lastSectionIndex].items.push({
                 id: `item-${lastSectionIndex}-${lineIdx}`,
                 name: trimmed.replace(/\*\*/g, '').trim(),
@@ -196,6 +197,7 @@ export default function BudgetBiteAI() {
         }
       });
 
+      // 空っぽのセクションを除外してステートにセット
       setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
       setSupportMessage(extractedMsg);
 
@@ -358,8 +360,9 @@ export default function BudgetBiteAI() {
       1. 各曜日の献立の見出しは、必ず「### 月曜日」「### 火曜日」のように【曜日名】を明記して開始してください。
       2. 曜日ごとの中身は、まず「**メニュー名**」を書き、その下に「・ステップ1… ・ステップ2…」のように簡単に行を変えて作り方を書いてください。
       3. 買い物リストの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
-      4. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇取り箇条書き（「- 食材名」形式）で出力してください。
-      5. 最後に必ず、「だいちゃんへ」から始まる温かい応援メッセージを添えてね。`;
+      4. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で出力してください。
+      5. もし独自の調味料などを使う場合は、「### 【常備調味料】」という見出しを作ってリストアップしてください。
+      6. 最後に必ず、「だいちゃんへ」から始まる温かい応援メッセージを添えてね。`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -571,7 +574,6 @@ export default function BudgetBiteAI() {
                       </div>
                     </>
                   ) : (
-                    /* 🌟【超重要バグ修正】未パース時に aiResponse を参照するように変更（変数エラー回避） */
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
 
@@ -610,7 +612,6 @@ export default function BudgetBiteAI() {
                       </div>
                     ))
                   ) : (
-                    /* 🌟【超重要バグ修正】ここも aiResponse を参照するように修正 */
                     <div className="whitespace-pre-wrap text-xs">
                       {aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "買い物リストの読み込みに失敗しました。"}
                     </div>
