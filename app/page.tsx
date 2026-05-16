@@ -7,17 +7,16 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-interface ShoppingItem { id: string; name: string; checked: boolean; fridgeIn: boolean; }
+interface ShoppingItem { id: string; name: string; checked: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
-interface HistoryItem { id: string; name: string; price: number; date: string; category: CategoryType; rawAiResponse?: string; rawNameOnly: string; }
+interface MenuDay { day: string; content: string; }
+interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; }
 
 type ActiveTabType = 'menu' | 'shopping' | 'stats';
 type CategoryType = '自炊' | '外食' | '買い食い' | '会社の弁当' | 'その他';
-
 interface FavoriteShop { id: string; label: string; itemName: string; category: CategoryType; defaultPrice: string; }
 
 const DAY_MAP_ENG_TO_JA: Record<number, string> = { 0: '日', 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土' };
-const DAYS_OF_WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 
 export default function BudgetBiteAI() {
   // 💰 予算・ステータス
@@ -31,15 +30,12 @@ export default function BudgetBiteAI() {
   const [expense, setExpense] = useState("");
   const [activeCategory, setActiveCategory] = useState<CategoryType>('自炊');
   const [stock, setStock] = useState(""); 
-  const [userRequest, setUserRequest] = useState("平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
+  const [userRequest, setUserRequest] = useState("1週間3500円程度で、平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
   
   // 📅 カレンダー制御
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
-
-  // 📅 週一括プランニング用の選択曜日ステータス (日〜土)
-  const [selectedWeekDays, setSelectedWeekDays] = useState<boolean[]>([false, true, true, true, true, true, false]);
 
   // 🤖 AI・表示データ
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -47,7 +43,10 @@ export default function BudgetBiteAI() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTabType>('menu');
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
-  const [archivedMenu, setArchivedMenu] = useState<string | null>(null);
+  const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
+  const [activeDay, setActiveDay] = useState<string>("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingPrice, setEditingPrice] = useState<string>("");
 
   // ⭐️ お気に入りのお店リスト
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
@@ -77,59 +76,103 @@ export default function BudgetBiteAI() {
     fetchBudgetData(); 
   }, [baseBudget]);
 
+  // カレンダー選択日変更時に、その日のAI献立履歴を復元する
   useEffect(() => {
     const targetTitle = `AI相談 (${selectedYear}年${selectedMonth}月${selectedDay}日)`;
     const found = history.find(item => item.name === targetTitle && item.rawAiResponse);
     
     if (found && found.rawAiResponse) {
-      setArchivedMenu(found.rawAiResponse);
-      parseShoppingList(found.rawAiResponse);
+      setAiResponse(found.rawAiResponse);
     } else {
-      setArchivedMenu(null);
-      if (!aiResponse) setShoppingSections([]);
+      setAiResponse("");
     }
   }, [selectedYear, selectedMonth, selectedDay, history]);
 
-  const parseShoppingList = (text: string) => {
+  useEffect(() => {
+    if (!aiResponse) {
+      setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
+    }
     try {
-      const parts = text.split(/##\s*🛒\s*買い物リスト/i);
+      // 📅 1. 献立テキストの曜日分解
+      const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
+      const menuLines = menuPart.split('\n');
+      const parsedDays: MenuDay[] = [];
+      let currentDayName = "";
+      let currentDayText: string[] = [];
+      const dayPatterns = [
+        { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
+        { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
+        { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
+        { name: "木", regex: /(木曜日|【木】|■木|###\s*木)/ },
+        { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
+        { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
+        { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
+      ];
+
+      menuLines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) { if (currentDayName) currentDayText.push(line); return; }
+        const foundDay = dayPatterns.find(p => p.regex.test(trimmed));
+        if (foundDay) {
+          if (currentDayName && currentDayText.length > 0) {
+            parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+          }
+          currentDayName = foundDay.name; currentDayText = [line]; 
+        } else if (currentDayName) { currentDayText.push(line); }
+      });
+      if (currentDayName && currentDayText.length > 0) {
+        parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+      }
+      setMenuDays(parsedDays);
+      if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
+
+      // 🛒 2. 買い物リストのパース
+      const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
-      const lines = parts[1].split('\n');
+      
+      const shoppingText = parts[1];
+      const lines = shoppingText.split('\n');
       const parsedSections: ShoppingSection[] = [];
       let currentSectionIdx = -1;
 
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-        const trimmed = lines[lineIdx].trim();
+        const line = lines[lineIdx];
+        const trimmed = line.trim();
         if (!trimmed) continue;
-        if (trimmed.includes('【') && trimmed.includes('】')) {
+        
+        if (trimmed.includes('常備品') || trimmed.includes('想定') || trimmed.startsWith('※')) {
+          continue;
+        }
+
+        const isHeader = trimmed.includes('【') && trimmed.includes('】');
+        
+        if (isHeader) {
           const cleanTitle = trimmed.replace(/###|##|#|\*\*|・|\-|【|】/g, '').trim();
           parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
           currentSectionIdx = parsedSections.length - 1;
-        } else if (currentSectionIdx >= 0 && /^[\s\-\*・\d\.]/.test(trimmed)) {
-          let name = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\复/g, '').replace(/\*\*/g, '').trim();
-          if (name.length > 0 && name.length < 50) { 
-            parsedSections[currentSectionIdx].items.push({ id: `item-${currentSectionIdx}-${lineIdx}`, name, checked: false, fridgeIn: false });
+        } else if (currentSectionIdx >= 0) {
+          const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
+          
+          if (isBulletPoint) {
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+            
+            if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
+              continue;
+            }
+
+            if (itemNameClean.length > 0 && itemNameClean.length < 20) {
+              parsedSections[currentSectionIdx].items.push({ 
+                id: `item-${currentSectionIdx}-${lineIdx}`, 
+                name: itemNameClean, 
+                checked: false 
+              });
+            }
           }
         }
       }
       setShoppingSections(parsedSections);
     } catch (e) { console.error(e); }
-  };
-
-  useEffect(() => {
-    if (aiResponse) parseShoppingList(aiResponse);
   }, [aiResponse]);
-
-  // 💡 「常備品」という言い訳文字が入った行を、上から下まで一切容赦なく削ぎ落とす無慈悲なフィルター
-  const filterExcuseLines = (text: string): string => {
-    return text.split('\n').filter(line => {
-      const cleanLine = line.trim();
-      if (cleanLine.includes('常備品') || cleanLine.includes('常備調味料')) {
-        return false; // 「常備品」の文字が含まれる行は1行まるごとこの世から消滅させる
-      }
-      return true;
-    }).join('\n');
-  };
 
   const fetchBudgetData = async () => {
     try {
@@ -140,28 +183,21 @@ export default function BudgetBiteAI() {
         const activeBase = currentSavedBase ? parseInt(currentSavedBase) : baseBudget;
         setBudget(activeBase - totalExpense);
 
-        setHistory(data.map((item): HistoryItem => {
-          const nameStr = item.item_name || "記録";
-          let detectedCategory: CategoryType = '自炊';
-          if (nameStr.includes('[外食]')) detectedCategory = '外食';
-          else if (nameStr.includes('[買い食い]')) detectedCategory = '買い食い';
-          else if (nameStr.includes('[会社の弁当]')) detectedCategory = '会社の弁当';
-          else if (nameStr.includes('[その他]')) detectedCategory = 'その他';
-
-          const rawNameOnly = nameStr.replace(/^\[.*?\]\s*/, '');
-
-          return {
-            id: item.id, 
-            name: nameStr, 
-            rawNameOnly: rawNameOnly,
-            price: item.expense_price || 0,
-            category: detectedCategory,
-            rawAiResponse: item.ai_response || undefined,
-            date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })
-          };
-        }));
+        setHistory(data.map((item): HistoryItem => ({
+          id: item.id, 
+          name: item.item_name || "買い物", 
+          price: item.expense_price || 0,
+          rawAiResponse: item.ai_response || undefined,
+          date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
+                new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+        })));
+        
         const lastAi = data.find(item => item.ai_response);
-        if (lastAi && !aiResponse) { setAiResponse(lastAi.ai_response); setStock(lastAi.stock_items || ""); setUserRequest(lastAi.user_request || userRequest); }
+        if (lastAi && !aiResponse) { 
+          setAiResponse(lastAi.ai_response); 
+          setStock(lastAi.stock_items || ""); 
+          setUserRequest(lastAi.user_request || userRequest); 
+        }
       }
     } catch (e) { console.error(e); }
   };
@@ -172,7 +208,7 @@ export default function BudgetBiteAI() {
     if (activeCategory === '会社の弁当') price = 274;
 
     const finalName = `[${activeCategory}] ${itemName || "買い物"}`;
-    if (isNaN(price) || price <= 0) return alert("金額を正しく入力してね");
+    if (isNaN(price) || price <= 0) return alert("金額を正しく入力してね！");
     
     const { error } = await supabase.from('budgets').insert([{ 
       budget_amount: budget - price, 
@@ -232,11 +268,16 @@ export default function BudgetBiteAI() {
     setExpense(shop.defaultPrice);
   };
 
-  const deleteExpense = async (id: string) => { 
-    if (confirm("削除する？")) { 
-      await supabase.from('budgets').delete().eq('id', id); 
-      fetchBudgetData(); 
-    } 
+  const updateExpensePrice = async (id: string) => {
+    const newPrice = parseInt(editingPrice); if (isNaN(newPrice) || newPrice < 0) return alert("正しい金額をいれてね");
+    const { error } = await supabase.from('budgets').update({ expense_price: newPrice }).eq('id', id);
+    if (!error) { setEditingId(null); setEditingPrice(""); fetchBudgetData(); }
+  };
+
+  const deleteExpense = async (id: string) => {
+    if (!confirm("削除する？")) return;
+    const { error } = await supabase.from('budgets').delete().eq('id', id);
+    if (!error) fetchBudgetData();
   };
 
   const saveBaseBudget = () => {
@@ -245,28 +286,6 @@ export default function BudgetBiteAI() {
     setBaseBudget(parsed);
     localStorage.setItem('budgetbite_base_budget', parsed.toString());
     setIsEditingBaseBudget(false);
-  };
-
-  const toggleBasket = (sIdx: number, iIdx: number) => {
-    const updated = [...shoppingSections];
-    updated[sIdx].items[iIdx].checked = !updated[sIdx].items[iIdx].checked;
-    setShoppingSections(updated);
-  };
-
-  const syncToFridge = (sIdx: number, iIdx: number) => {
-    const updated = [...shoppingSections];
-    const item = updated[sIdx].items[iIdx];
-    item.fridgeIn = !item.fridgeIn;
-    if (item.fridgeIn) {
-      setStock(prev => {
-        const names = prev.split(/,\s*/).filter(n => n.trim() !== "");
-        if (!names.includes(item.name)) names.push(item.name);
-        return names.join(', ');
-      });
-    } else {
-      setStock(prev => prev.split(/,\s*/).filter(n => n.trim() !== item.name).join(', '));
-    }
-    setShoppingSections(updated);
   };
 
   const getStats = () => {
@@ -278,12 +297,11 @@ export default function BudgetBiteAI() {
   };
 
   const resetData = async () => {
-    if (!confirm("データをフルリセットする？")) return;
+    if (!confirm("リセットする？")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
+    if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); }
   };
 
-  // 💡 通常の単日AI相談（要望を限界までシンプル化）
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -291,138 +309,80 @@ export default function BudgetBiteAI() {
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const targetDateStr = `${selectedYear}年${selectedMonth}月${selectedDay}日`;
       
-      const prompt = `あなたは節約料理のプロです。以下の食材状況と要望に合わせて、指定のフォーマットで出力してください。料理に使う調味料（塩、醤油、油、みりん、酒、砂糖など）や米がある場合は、すべて省略せずに買い物リストに1個ずつ箇条書きで出力してください。
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+出力の最初から最後まで、フォーマット以外の挨拶、解説、応援メッセージなどの雑談は【絶対に】一切含めないでください。リストの直後で出力を即座に終了してください。
 
-【目標日】${targetDateStr}
-【冷蔵庫にある余り物】${stock}
-【ユーザーからのリクエスト】${userRequest}
+【条件】
+・予算：1週間の買い出し総額3500円程度
+・ターゲット：平日の夜に時間がなくてもパパッと作れる時短レシピ（調理時間10〜15分）
+・冷蔵庫の余り食材：${stock || "特になし"}
+・個別リクエスト（目標日含む）：${targetDateStr}向け、および「${userRequest}」
 
 【出力フォーマット】
-### ${targetDateStr} の献立計画
+
+### 月曜日
 **メニュー名**
-・手順やコツをここに簡潔に書く
+・手順をここに書く
+
+### 火曜日
+**メニュー名**
+・手順をここに書く
+
+### 水曜日
+**メニュー名**
+・手順をここに書く
+
+### 木曜日
+**メニュー名**
+・手順をここに書く
+
+### 金曜日
+**メニュー名**
+・手順をここに書く
 
 ## 🛒 買い物リスト
+
 ### 【肉・魚類】
 - 食材名
+
 ### 【野菜・その他】
 - 食材名
-### 【調味料】
-- 調味料名`;
-      
-      const result = await model.generateContent(prompt);
-      let text = result.response.text();
-      
-      // 💥 プレビュー用・データベース保存用のテキスト両方から「常備品」行を物理的に強制抹殺
-      text = filterExcuseLines(text);
 
-      setAiResponse(text); 
-      setArchivedMenu(text);
-      setActiveTab('menu');
+### 【調味料】
+- 調味料名
+- 調味料名
+- 調味料名
+※注意：上記の月曜〜金曜の手順の中で登場する調味料（醤油、酒、みりん、砂糖、塩、片栗粉、油、ポン酢など）は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。`;
+      
+      const result = await model.generateContent(prompt); const text = result.response.text();
+      if (!text) throw new Error("応答が空でした。");
+      setAiResponse(text); setActiveTab('menu');
       await supabase.from('budgets').insert([{ budget_amount: budget, item_name: `AI相談 (${targetDateStr})`, expense_price: 0, stock_items: stock, user_request: userRequest, ai_response: text }]);
       fetchBudgetData();
-    } catch (err: any) { alert(err.message); }
+    } catch (err: any) { setAiResponse(`APIエラー: ${err.message || err}`); }
     setLoading(false);
-  };
-
-  // 💡 週一括プランニング機能（要望を限界までシンプル化）
-  const askGeminiWeekly = async () => {
-    const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
-    if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
-
-    setLoading(true)
-    try {
-      const currentSelectedDate = new Date(selectedYear, selectedMonth - 1, selectedDay);
-      const currentDayOfWeek = currentSelectedDate.getDay(); 
-      
-      const sundayDate = new Date(currentSelectedDate);
-      sundayDate.setDate(currentSelectedDate.getDate() - currentDayOfWeek);
-
-      const weekDatesMap = selectedIndexes.map(idx => {
-        const d = new Date(sundayDate);
-        d.setDate(sundayDate.getDate() + idx);
-        return {
-          dayName: DAYS_OF_WEEK[idx],
-          dateStr: `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
-        };
-      });
-
-      const targetDaysLine = weekDatesMap.map(m => `${m.dateStr}(${m.dayName})`).join(', ');
-
-      const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-      const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。料理に使うすべての調味料や米は、省略せずに買い物リストに1個ずつ箇条書きで出力してください。
-
-【計画対象日】${targetDaysLine}
-【冷蔵庫にある余り物】${stock}
-【ユーザーからの要望】${userRequest}
-
-【出力フォーマット】
-### [日付文字列] の献立計画
-**メニュー名**
-・手順やコツを簡潔に書く
-
-## 🛒 買い物リスト
-### 【肉・魚類】
-- 食材名
-### 【野菜・その他】
-- 食材名
-### 【調味料】
-- 調味料名`;
-
-      const result = await model.generateContent(prompt);
-      let fullText = result.response.text();
-
-      // 💥 週一括のテキスト全体からも「常備品」行を物理的に強制抹殺
-      fullText = filterExcuseLines(fullText);
-
-      const shoppingPart = fullText.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
-
-      for (const mapObj of weekDatesMap) {
-        const escapedDate = mapObj.dateStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`###\\s*${escapedDate}[\\s\\S]*?(?=###|##\\s*🛒|$)`, 'i');
-        const match = fullText.match(regex);
-        
-        let dayMenuText = `### ${mapObj.dateStr} の献立計画\n**一括プランニングメニュー**\n・詳細は全体の買い物リストを確認してね！`;
-        if (match && match[0]) {
-          dayMenuText = match[0].trim();
-        }
-
-        const finalDayResponse = `${dayMenuText}\n\n## 🛒 買い物リスト\n${shoppingPart}`;
-
-        await supabase.from('budgets').insert([{
-          budget_amount: budget,
-          item_name: `AI相談 (${mapObj.dateStr})`,
-          expense_price: 0,
-          stock_items: stock,
-          user_request: `[一括作成] ${userRequest}`,
-          ai_response: finalDayResponse
-        }]);
-      }
-
-      setAiResponse(fullText);
-      setArchivedMenu(fullText);
-      setActiveTab('menu');
-      alert("曜日分の献立計画を一括作成したよ！余計な文字は完全に排除したよ。");
-      fetchBudgetData();
-
-    } catch (err: any) { alert(err.message); }
-    setLoading(false);
-  };
-
-  const toggleWeekDay = (index: number) => {
-    const updated = [...selectedWeekDays];
-    updated[index] = !updated[index];
-    setSelectedWeekDays(updated);
   };
 
   const formatMenuContent = (rawText: string) => {
-    return rawText.split('\n').map((line, idx) => {
+    return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
-      if (trimmed.startsWith('###')) return <div key={idx} className="text-xs font-bold text-cyan-400 mt-2 border-b border-cyan-900 pb-1">{trimmed.replace(/###/g, '')}</div>;
-      if (trimmed.startsWith('**') && trimmed.endsWith('**')) return <div key={idx} className="text-sm font-bold text-white mt-4 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\*/g, '')}</div>;
-      if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) return <div key={idx} className="text-xs text-gray-300 pl-4 py-1 bg-zinc-900/60 rounded my-1">{trimmed.replace(/^[\s・\-\d\.]+\s*/, '👉 ')}</div>;
+      
+      if (trimmed.includes('常備品') || trimmed.includes('想定')) {
+        return null;
+      }
+
+      if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\转/g, '').replace(/\*\*/g, '')}</div>;
+      }
+      if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
+        const contentOnly = trimmed.replace(/^[\s・\-\d\.]+\s*/, '');
+        
+        if (contentOnly.startsWith('(') || contentOnly.startsWith('（')) {
+          return null;
+        }
+
+        return <div key={idx} className="text-xs text-gray-300 pl-4 py-0.5 bg-zinc-900/40 rounded my-0.5">👉 {contentOnly}</div>;
+      }
       return <div key={idx} className="text-xs text-gray-400 pl-2">{trimmed}</div>;
     });
   };
@@ -459,8 +419,8 @@ export default function BudgetBiteAI() {
             </select>
           </div>
         </div>
-        <div className="grid grid-cols-7 gap-1 max-h-[160px] overflow-y-auto pr-1">{dayButtons}</div>
-        <div className="text-center text-[10px] font-bold text-cyan-400 bg-zinc-950 py-1 rounded-xl border border-zinc-900">選択中: {selectedYear}年{selectedMonth}月{selectedDay}日</div>
+        <div className="grid grid-cols-7 gap-1 max-h-[140px] overflow-y-auto pr-1">{dayButtons}</div>
+        <div className="text-center text-[10px] font-bold text-cyan-400 bg-zinc-950 py-1 rounded-xl border border-zinc-900">選択日: {selectedYear}年{selectedMonth}月{selectedDay}日</div>
       </div>
     );
   };
@@ -468,15 +428,15 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.7</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 tracking-tight italic">BudgetBite <span className="text-xs bg-cyan-900 text-cyan-200 px-2 py-0.5 rounded-full not-italic">AI</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
-        {/* 💳 予算カード */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 text-center shadow-2xl">
-          <p className="text-xs uppercase tracking-widest text-gray-500 mb-1">Remaining Budget</p>
-          <div className="text-5xl font-mono text-white mb-2 font-bold">¥{budget.toLocaleString()}</div>
-          <div className="text-[10px] text-cyan-600 font-bold">
+        {/* 💳 予算カード (基準予算 変更機能つき) */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center">
+          <p className="text-xs uppercase tracking-widest text-gray-500 mb-1 font-bold">Remaining Budget</p>
+          <div className="text-5xl font-mono text-white my-2 font-bold">¥{budget.toLocaleString()}</div>
+          <div className="text-[10px] text-cyan-600 font-bold mt-1">
             {isEditingBaseBudget ? (
                <div className="flex justify-center items-center gap-1">
                  <input type="number" value={inputBaseBudget} onChange={(e)=>setInputBaseBudget(e.target.value)} className="bg-black text-white w-20 text-center border border-zinc-700 rounded py-0.5 text-xs"/>
@@ -484,42 +444,40 @@ export default function BudgetBiteAI() {
                  <button type="button" onClick={()=>setIsEditingBaseBudget(false)} className="text-gray-500 px-1">✕</button>
                </div>
             ) : (
-               <span onClick={() => { setIsEditingBaseBudget(true); setInputBaseBudget(baseBudget.toString()); }}>基準予算: ¥{baseBudget.toLocaleString()} ✏️</span>
+               <span className="cursor-pointer" onClick={() => { setIsEditingBaseBudget(true); setInputBaseBudget(baseBudget.toString()); }}>基準予算: ¥{baseBudget.toLocaleString()} ✏️</span>
             )}
+          </div>
+          <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
+            <div className="bg-cyan-500 h-full transition-all" style={{ width: `${Math.max(0, (budget/baseBudget)*100)}%` }}></div>
           </div>
         </div>
 
-        {/* 💰 出費入力 ＋ ⭐ お気に入り */}
-        <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-3">
-          <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900">
+        {/* 🛍️ カテゴリ選択・出費入力 */}
+        <div className="space-y-2 bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800">
+          <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900 mb-1">
             {(['自炊', '外食', '買い食い', '会社の弁当'] as CategoryType[]).map(cat => (
-              <button key={cat} type="button" onClick={() => handleCategoryChange(cat)} className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold transition-all ${activeCategory === cat ? 'bg-zinc-800 text-white border border-zinc-700' : 'text-gray-600'}`}>{cat}</button>
+              <button key={cat} type="button" onClick={() => handleCategoryChange(cat)} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${activeCategory === cat ? 'bg-zinc-800 text-white border border-zinc-700' : 'text-gray-600'}`}>{cat}</button>
             ))}
           </div>
           <form onSubmit={addExpense} className="flex gap-2">
-            <input type="text" value={itemName} onChange={(e)=>setItemName(e.target.value)} placeholder="品名(任意)" className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-white text-xs focus:outline-none"/>
-            <input type="number" value={expense} onChange={(e)=>setExpense(e.target.value)} placeholder="金額" className="w-24 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono text-lg focus:outline-none"/>
-            <button type="submit" className="bg-white text-black px-4 rounded-xl font-bold text-xs">記録</button>
+            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
+            <input type="number" value={expense} onChange={(e) => setExpense(e.target.value)} placeholder="金額" disabled={activeCategory === '会社の弁当'} className="w-24 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-lg font-mono focus:outline-none" />
+            <button className="bg-white text-black px-5 rounded-xl font-bold text-xs">記録</button>
           </form>
 
           {/* ⭐️ お気に入り登録・呼び出し */}
-          <div className="pt-2 border-t border-zinc-900 space-y-2">
+          <div className="pt-2 border-t border-zinc-900/60 space-y-2">
             <div className="flex justify-between items-center px-1">
-              <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">よく行くお店（お気に入り選択）</p>
-              <button type="button" onClick={addCurrentToFavorites} className="text-[9px] bg-cyan-900/40 border border-cyan-800/60 text-cyan-400 font-bold px-2 py-0.5 rounded-lg hover:bg-cyan-800 transition-all">
-                いまの入力を登録 ⭐️
-              </button>
+              <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">お気に入りから入力</p>
+              <button type="button" onClick={addCurrentToFavorites} className="text-[9px] bg-cyan-900/40 border border-cyan-800/60 text-cyan-400 font-bold px-2 py-0.5 rounded-lg hover:bg-cyan-800 transition-all">今の入力を登録 ⭐️</button>
             </div>
-            
             <div className="grid grid-cols-3 gap-1.5">
               {favoriteShops.map((shop) => (
                 <div key={shop.id} className="relative group">
-                  <button type="button" onClick={() => handleApplyFavorite(shop)} className="w-full bg-zinc-950 border border-zinc-900 hover:border-zinc-700 py-2.5 px-1 rounded-xl text-[10px] text-gray-300 font-bold transition-all truncate text-center pr-4">
+                  <button type="button" onClick={() => handleApplyFavorite(shop)} className="w-full bg-zinc-950 border border-zinc-900/80 hover:border-zinc-700 py-2 px-1 rounded-xl text-[10px] text-gray-300 font-bold transition-all truncate text-center pr-4">
                     {shop.label}
                   </button>
-                  <button type="button" onClick={(e) => deleteFavoriteShop(shop.id, e)} className="absolute top-1 right-1 text-[8px] text-gray-600 hover:text-red-400 px-0.5" title="削除">
-                    ✕
-                  </button>
+                  <button type="button" onClick={(e) => deleteFavoriteShop(shop.id, e)} className="absolute top-1 right-1 text-[8px] text-gray-600 hover:text-red-400 px-0.5">✕</button>
                 </div>
               ))}
             </div>
@@ -529,106 +487,115 @@ export default function BudgetBiteAI() {
         {/* 📅 カレンダー */}
         {renderMonthCalendar()}
 
-        {/* 🍽️ メニュー表示 */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4">
-          <div className="flex gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-            <button type="button" onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 選択日の献立</button>
-            <button type="button" onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
-            <button type="button" onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 今月の分析</button>
-          </div>
-          
-          <div className="text-gray-300 text-sm max-h-[350px] overflow-y-auto">
-            {activeTab === 'menu' && (
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 min-h-[100px]">
-                {archivedMenu ? formatMenuContent(archivedMenu) : (
-                  <div className="text-center text-xs text-gray-500 py-6">選択した日の献立計画はまだありません。<br/>下のフォームからAIに相談してみてね！</div>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'shopping' && (
-              <div className="space-y-4">
-                {shoppingSections.length > 0 ? shoppingSections.map((sec, sIdx) => (
-                  <div key={sIdx} className="border-b border-zinc-800 pb-3 last:border-0">
-                    <h4 className="text-[10px] font-bold text-cyan-500 mb-2 uppercase tracking-widest">{sec.title}</h4>
-                    <div className="grid grid-cols-1 gap-2">
-                      {sec.items.map((item, iIdx) => (
-                        <div key={item.id} className="flex gap-2">
-                          <button type="button" onClick={() => toggleBasket(sIdx, iIdx)} className={`flex-1 border rounded-xl px-3 py-2 text-left flex items-center gap-2 transition-all ${item.checked ? 'text-gray-600 bg-zinc-900/20 border-zinc-800 line-through' : 'text-gray-300 bg-zinc-950 border-zinc-800/40'}`}>
-                            <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && "✓"}</div>
-                            <span className="text-xs truncate">{item.name}</span>
-                          </button>
-                          <button type="button" onClick={() => syncToFridge(sIdx, iIdx)} className={`px-3 py-2 rounded-xl border text-[10px] font-bold transition-all ${item.fridgeIn ? 'bg-green-900/30 text-green-400 border-green-800' : 'bg-zinc-950 text-gray-700 border-zinc-800'}`}>冷蔵庫</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )) : <div className="text-center text-xs text-gray-500 py-6">買い物リストがありません。</div>}
-              </div>
-            )}
-
-            {activeTab === 'stats' && (
-              <div className="space-y-4 p-2">
-                <p className="text-xs font-bold text-gray-500 mb-4">CATEGORY BREAKDOWN</p>
-                {getStats().map(s => (
-                  <div key={s.category} className="space-y-1">
-                    <div className="flex justify-between text-[10px] font-bold uppercase">
-                      <span className={s.category === '外食' || s.category === '買い食い' ? 'text-red-400' : 'text-cyan-400'}>{s.category}</span>
-                      <span className="font-mono">¥{s.total.toLocaleString()}</span>
-                    </div>
-                    <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
-                      <div className={`h-full transition-all ${s.category === '外食' ? 'bg-red-500' : s.category === '買い食い' ? 'bg-orange-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (s.total / 10000) * 100)}%` }}></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 🛠️ AIプランニング入力 */}
+        {/* 🤖 AIプランニング入力フォーム */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
-          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">AI Planning Form</div>
-          <input type="text" value={stock} onChange={(e)=>setStock(e.target.value)} placeholder="在庫リスト（冷蔵庫に入れると自動追記）" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-xs focus:outline-none"/>
-          <textarea value={userRequest} onChange={(e)=>setUserRequest(e.target.value)} placeholder="AIへの要望（例：パパッと作れる時短モードで！）" className="w-full h-16 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2 text-white text-xs focus:outline-none resize-none"/>
-          
-          <div className="flex gap-1">
-            <button type="button" onClick={askGemini} disabled={loading} className="flex-1 py-4 bg-zinc-900 border border-zinc-800 text-gray-300 rounded-2xl font-bold text-xs shadow-xl disabled:opacity-50">
-              {loading ? "思考中..." : "選択日のみ作成"}
-            </button>
-            <button type="button" onClick={askGeminiWeekly} disabled={loading} className="flex-[2] py-4 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold text-xs shadow-xl disabled:opacity-50">
-              {loading ? "一括生成中..." : "選んだ曜日分を一括生成 🗓️"}
-            </button>
-          </div>
-
-          {/* 🗓️ 週一括用の曜日選択 */}
-          <div className="bg-black/40 p-3 rounded-2xl border border-zinc-900 space-y-2">
-            <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest text-center">一括生成する対象の曜日を選択</p>
-            <div className="flex justify-between gap-1">
-              {DAYS_OF_WEEK.map((day, idx) => (
-                <button key={day} type="button" onClick={() => toggleWeekDay(idx)} className={`flex-1 py-2 rounded-lg font-mono text-[10px] font-bold transition-all border ${selectedWeekDays[idx] ? 'bg-cyan-950 text-cyan-400 border-cyan-800' : 'bg-zinc-950 text-gray-600 border-zinc-900'}`}>
-                  {day}
-                </button>
-              ))}
-            </div>
-          </div>
+          <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
+          <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
+          <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">{loading ? "Geminiが考え中..." : "AIコンシェルジュに相談する"}</button>
         </div>
 
-        {/* 最近のアクティビティ */}
-        <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Recent Activity</p>
-          {history.slice(0, 5).map(item => (
-            <div key={item.id} className="flex justify-between items-center text-xs pb-1 border-b border-zinc-900 last:border-0">
-               <span className="text-gray-400 truncate max-w-[200px]">{item.name}</span>
-               <div className="flex gap-2 items-center">
-                 <span className={item.price > 0 ? "text-red-400 font-mono" : "text-cyan-400 font-bold"}>{item.price > 0 ? `-¥${item.price.toLocaleString()}` : "AI"}</span>
-                 <button type="button" onClick={() => deleteExpense(item.id)} className="text-[10px] opacity-40">🗑️</button>
-               </div>
-            </div>
-          ))}
-        </div>
+        {/* 📊 履歴表示（上位5件） */}
+        {history.length > 0 && (
+          <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Recent Activity</p>
+            {history.slice(0, 5).map(item => (
+              <div key={item.id} className="flex justify-between items-center border-b border-zinc-900 pb-2 last:border-0">
+                <div className="flex flex-col"><span className="text-gray-300 text-sm truncate max-w-[200px]">{item.name}</span><span className="text-[9px] text-gray-600 font-mono">{item.date}</span></div>
+                <div className="flex items-center gap-3">
+                  {editingId === item.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" value={editingPrice} onChange={(e) => setEditingPrice(e.target.value)} className="w-20 bg-zinc-950 border border-cyan-800 px-2 py-1 rounded text-right text-white text-xs" autoFocus />
+                      <button onClick={() => updateExpensePrice(item.id)} className="text-xs text-green-400 bg-green-950/40 px-2 py-1 rounded border border-green-900">保存</button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className={item.price > 0 ? "text-red-400 font-mono font-bold text-sm" : "text-cyan-400 font-bold text-xs"}>{item.price > 0 ? `-¥${item.price.toLocaleString()}` : "AI"}</span>
+                      {item.price > 0 && <button onClick={() => { setEditingId(item.id); setEditingPrice(item.price.toString()); }} className="text-xs">✏️</button>}
+                      <button onClick={() => deleteExpense(item.id)} className="text-xs">🗑️</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
-        <div className="text-center pt-8"><button type="button" onClick={resetData} className="text-zinc-800 text-[9px] uppercase tracking-widest font-bold">Factory Reset</button></div>
+        {/* 🍽️ 提案された献立・買い物リスト表示領域 */}
+        {aiResponse && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
+            <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+              <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
+              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
+              <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 分析</button>
+            </div>
+            
+            <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
+              {activeTab === 'menu' && (
+                <div className="space-y-4">
+                  {menuDays.length > 0 ? (
+                    <>
+                      <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
+                        {menuDays.map((md) => (
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-3 py-1.5 rounded-md font-bold text-xs flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.day}</button>
+                        ))}
+                      </div>
+                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">{formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}</div>
+                    </>
+                  ) : (
+                    <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'shopping' && (
+                <div className="space-y-4">
+                  {shoppingSections.length > 0 ? (
+                    shoppingSections.map((sec, secIdx) => (
+                      <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                        <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
+                        {sec.items.length > 0 ? (
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            {sec.items.map((item, itemIdx) => (
+                              <button key={item.id} onClick={() => {
+                                const updated = [...shoppingSections]; updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; setShoppingSections(updated);
+                              }} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                                <span className="truncate">{item.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500 italic pl-2">該当する項目がありませんでした。</div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "リストの読み込みに失敗しました。"}</div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'stats' && (
+                <div className="space-y-4 p-2">
+                  <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-widest">Category Breakdown</p>
+                  {getStats().map(s => (
+                    <div key={s.category} className="space-y-1">
+                      <div className="flex justify-between text-[10px] font-bold uppercase">
+                        <span className={s.category === '外食' || s.category === '買い食い' ? 'text-red-400' : 'text-cyan-400'}>{s.category}</span>
+                        <span className="font-mono">¥{s.total.toLocaleString()}</span>
+                      </div>
+                      <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden border border-zinc-800">
+                        <div className={`h-full transition-all ${s.category === '外食' ? 'bg-red-500' : s.category === '買い食い' ? 'bg-orange-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (s.total / 10000) * 100)}%` }}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="text-center pt-8"><button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold">Reset Data</button></div>
       </main>
     </div>
   );
