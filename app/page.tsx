@@ -9,25 +9,18 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface ShoppingItem { id: string; name: string; checked: boolean; fridgeIn: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
-interface HistoryItem { id: string; name: string; price: number; date: string; category: CategoryType; rawAiResponse?: string; }
+interface HistoryItem { id: string; name: string; price: number; date: string; category: CategoryType; rawAiResponse?: string; rawNameOnly: string; }
 
 type ActiveTabType = 'menu' | 'shopping' | 'stats';
 type CategoryType = '自炊' | '外食' | '買い食い' | '会社の弁当' | 'その他';
 
-// 🏪 よく行くお店のプリセット定義
-interface PresetShop {
+// 🏪 動的なクイック店舗用の型
+interface DynamicShop {
   label: string;
   itemName: string;
-  defaultPrice: string;
   category: CategoryType;
+  defaultPrice: string;
 }
-
-const PRESET_SHOPS: PresetShop[] = [
-  { label: "🛒 ウオロク", itemName: "ウオロク", defaultPrice: "2000", category: "自炊" },
-  { label: "🏪 コンビニ", itemName: "コンビニ", defaultPrice: "500", category: "買い食い" },
-  { label: "🍱 社食弁当", itemName: "社食弁当", defaultPrice: "450", category: "会社の弁当" },
-  { label: "🥤 自販機", itemName: "自販機ドリンク", defaultPrice: "160", category: "買い食い" },
-];
 
 const DAY_MAP_ENG_TO_JA: Record<number, string> = { 0: '日', 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土' };
 
@@ -58,6 +51,9 @@ export default function BudgetBiteAI() {
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [archivedMenu, setArchivedMenu] = useState<string | null>(null);
 
+  // 🏪 履歴から自動抽出された「よく行くお店」リスト
+  const [dynamicShops, setDynamicShops] = useState<DynamicShop[]>([]);
+
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
@@ -71,6 +67,7 @@ export default function BudgetBiteAI() {
     fetchBudgetData(); 
   }, [baseBudget]);
 
+  // カレンダーの日付変更時の過去メニュー呼び出し
   useEffect(() => {
     const targetTitle = `AI相談 (${selectedYear}年${selectedMonth}月${selectedDay}日)`;
     const found = history.find(item => item.name === targetTitle && item.rawAiResponse);
@@ -83,6 +80,67 @@ export default function BudgetBiteAI() {
       if (!aiResponse) setShoppingSections([]);
     }
   }, [selectedYear, selectedMonth, selectedDay, history]);
+
+  // 履歴（history）が更新されたら、自動的によく行くお店を4つ抽出する
+  useEffect(() => {
+    if (history.length === 0) {
+      // 履歴が空の時のデフォルトのモック
+      setDynamicShops([
+        { label: "🛒 ウオロク", itemName: "ウオロク", category: "自炊", defaultPrice: "2000" },
+        { label: "🍱 社食弁当", itemName: "社食弁当", category: "会社の弁当", defaultPrice: "274" }
+      ]);
+      return;
+    }
+
+    const uniqueShops: Record<string, { rawName: string; category: CategoryType; count: number; lastPrice: number }> = {};
+    
+    // 支出があるデータ（金額>0で、AI相談以外の純粋な記録）から集計
+    history.forEach(item => {
+      if (item.price > 0 && item.rawNameOnly && !item.name.includes("AI相談")) {
+        const key = `${item.rawNameOnly}_${item.category}`;
+        if (uniqueShops[key]) {
+          uniqueShops[key].count += 1;
+        } else {
+          uniqueShops[key] = {
+            rawName: item.rawNameOnly,
+            category: item.category,
+            count: 1,
+            lastPrice: item.price
+          };
+        }
+      }
+    });
+
+    // 登場回数が多い順にソートして最大4つ取得
+    const sortedShops = Object.values(uniqueShops)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4)
+      .map(shop => {
+        let emoji = "🛒";
+        if (shop.category === "外食") emoji = "🍔";
+        if (shop.category === "買い食い") emoji = "🏪";
+        if (shop.category === "会社の弁当") emoji = "🍱";
+
+        // 💡 会社の弁当、または品名に「弁当」「社食」が入っていたら274円に強制固定
+        const isBento = shop.category === "会社の弁当" || shop.rawName.includes("弁当") || shop.rawName.includes("社食");
+        const priceStr = isBento ? "274" : shop.lastPrice.toString();
+
+        return {
+          label: `${emoji} ${shop.rawName}`,
+          itemName: shop.rawName,
+          category: shop.category,
+          defaultPrice: priceStr
+        };
+      });
+
+    // もし社食弁当の登録がまだ履歴になければ、出しやすくするためにデフォルトで仕込んでおく
+    const hasBentoPreset = sortedShops.some(s => s.category === "会社の弁当");
+    if (!hasBentoPreset && sortedShops.length < 4) {
+      sortedShops.push({ label: "🍱 社食弁当", itemName: "社食弁当", category: "会社の弁当", defaultPrice: "274" });
+    }
+
+    setDynamicShops(sortedShops);
+  }, [history]);
 
   const parseShoppingList = (text: string) => {
     try {
@@ -131,9 +189,13 @@ export default function BudgetBiteAI() {
           else if (nameStr.includes('[会社の弁当]')) detectedCategory = '会社の弁当';
           else if (nameStr.includes('[その他]')) detectedCategory = 'その他';
 
+          // [カテゴリー] を除いた純粋な店名・品名を抽出
+          const rawNameOnly = nameStr.replace(/^\[.*?\]\s*/, '');
+
           return {
             id: item.id, 
             name: nameStr, 
+            rawNameOnly: rawNameOnly,
             price: item.expense_price || 0,
             category: detectedCategory,
             rawAiResponse: item.ai_response || undefined,
@@ -148,7 +210,13 @@ export default function BudgetBiteAI() {
 
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault(); 
-    const price = parseInt(expense); 
+    let price = parseInt(expense); 
+    
+    // 💡 登録時も、もし「会社の弁当」が選択されていれば、強制的に274円にする親切設計
+    if (activeCategory === '会社の弁当') {
+      price = 274;
+    }
+
     const finalName = `[${activeCategory}] ${itemName || "買い物"}`;
     if (isNaN(price) || price <= 0) return alert("金額を正しく入力してね");
     
@@ -164,11 +232,20 @@ export default function BudgetBiteAI() {
     if (!error) { setExpense(""); setItemName(""); fetchBudgetData(); }
   };
 
-  // 💡 よく行くお店のボタンを押した時の自動セット関数
-  const handleApplyPreset = (shop: PresetShop) => {
+  // 💡 カテゴリー切り替え時、もし「会社の弁当」が手動タップされたら274円を自動セット
+  const handleCategoryChange = (cat: CategoryType) => {
+    setActiveCategory(cat);
+    if (cat === '会社の弁当') {
+      setExpense("274");
+      if(!itemName) setItemName("社食弁当");
+    }
+  };
+
+  // 💡 よく行くお店（動的プリセット）をタップした時のセット処理
+  const handleApplyDynamicPreset = (shop: DynamicShop) => {
     setItemName(shop.itemName);
-    setExpense(shop.defaultPrice);
     setActiveCategory(shop.category);
+    setExpense(shop.defaultPrice);
   };
 
   const deleteExpense = async (id: string) => { 
@@ -292,7 +369,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v3.7</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v3.8</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
@@ -313,11 +390,11 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 💰 出費入力 ＋ 🏪 よく行くお店クイック選択 */}
+        {/* 💰 出費入力 ＋ 🏪 動的なお気に入り選択 */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-3">
           <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900">
             {(['自炊', '外食', '買い食い', '会社の弁当'] as CategoryType[]).map(cat => (
-              <button key={cat} type="button" onClick={() => setActiveCategory(cat)} className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold transition-all ${activeCategory === cat ? 'bg-zinc-800 text-white border border-zinc-700' : 'text-gray-600'}`}>{cat}</button>
+              <button key={cat} type="button" onClick={() => handleCategoryChange(cat)} className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold transition-all ${activeCategory === cat ? 'bg-zinc-800 text-white border border-zinc-700' : 'text-gray-600'}`}>{cat}</button>
             ))}
           </div>
           <form onSubmit={addExpense} className="flex gap-2">
@@ -326,12 +403,12 @@ export default function BudgetBiteAI() {
             <button type="submit" className="bg-white text-black px-4 rounded-xl font-bold text-xs">記録</button>
           </form>
 
-          {/* 💡 よく行くお店クイック登録エリア */}
+          {/* 💡 履歴からよく行くお店を自動生成するエリア */}
           <div className="pt-2 border-t border-zinc-900">
-            <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-2 pl-1">Quick Shop Select</p>
+            <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-2 pl-1">よく行くお店（履歴から自動登録）</p>
             <div className="grid grid-cols-4 gap-1.5">
-              {PRESET_SHOPS.map((shop, idx) => (
-                <button key={idx} type="button" onClick={() => handleApplyPreset(shop)} className="bg-zinc-950 border border-zinc-900 hover:border-zinc-700 py-2 px-1 rounded-xl text-[10px] text-gray-300 font-bold transition-all truncate text-center">
+              {dynamicShops.map((shop, idx) => (
+                <button key={idx} type="button" onClick={() => handleApplyDynamicPreset(shop)} className="bg-zinc-950 border border-zinc-900 hover:border-zinc-700 py-2 px-1 rounded-xl text-[10px] text-gray-300 font-bold transition-all truncate text-center">
                   {shop.label}
                 </button>
               ))}
@@ -342,7 +419,7 @@ export default function BudgetBiteAI() {
         {/* 📅 カレンダー */}
         {renderMonthCalendar()}
 
-        {/* 🍽️ メニュー表示エリア */}
+        {/* 🍽️ メメニュー表示エリア */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4">
           <div className="flex gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
             <button type="button" onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 選択日の献立</button>
