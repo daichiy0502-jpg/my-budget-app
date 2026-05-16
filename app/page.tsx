@@ -120,6 +120,18 @@ export default function BudgetBiteAI() {
     if (aiResponse) parseShoppingList(aiResponse);
   }, [aiResponse]);
 
+  // 💡 AIが吐き出した「常備品言い訳」をプログラムで強制抹殺するフィルター
+  const filterExcuseLines = (text: string): string => {
+    return text.split('\n').filter(line => {
+      const lowerLine = line.toLowerCase();
+      // 「常備品として想定」「常備品とします」「常備品は含まれません」などの行をまるごと消滅させる
+      if (lowerLine.includes('常備品') && (lowerLine.includes('想定') || lowerLine.includes('含む') || lowerLine.includes('除外') || lowerLine.includes('基本'))) {
+        return false;
+      }
+      return true;
+    }).join('\n');
+  };
+
   const fetchBudgetData = async () => {
     try {
       const { data } = await supabase.from('budgets').select('*').order('created_at', { ascending: false });
@@ -272,7 +284,7 @@ export default function BudgetBiteAI() {
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
   };
 
-  // 💡 通常の単日AI相談（隠蔽サボり・常備品想定を根絶する最強プロンプト）
+  // 💡 通常の単日AI相談
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -282,11 +294,9 @@ export default function BudgetBiteAI() {
       
       const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。
 
-【🚨🚨最重要：常備品の隠蔽・省略を絶対に許さない死守ルール🚨🚨】
-1. あなたは「常備品をリストに書かないサボり癖」があります。それを今ここで完全に捨ててください。
-2. 献立の調理手順の中で、1滴でも1つまみでも使用する調味料や主食（塩、コショウ、砂糖、醤油、みりん、酒、酢、サラダ油、ごま油、鶏ガラスープの素、だしの素、味噌、ポン酢、マヨネーズ、ケチャップ、にんにくチューブ、生姜チューブ、そして【米】）は、すべて例外なく1つずつ独立した「- 項目名」として買い物リストに出しなさい。
-3. 「これは家にあるだろう」と勝手に判断してリストから消去（隠蔽）することを固く禁じます。手順に出てくるものはすべてチェックボックス付きのリスト項目として白日の下に晒してください。
-4. カッコ書きでの言い訳（例：「その他定番調味料は〜」など）も一切認めません。見つけたら即座にエラーとみなします。
+【🚨重要ルール：調味料や米もすべて出すこと🚨】
+1. 調理手順で使用する調味料や米は、すべて例外なく1つずつ独立した「- 項目名」として買い物リストに出しなさい。
+2. カッコ書きなどで「その他は常備品とします」といった要約は不要です。
 
 【目標日】${targetDateStr}
 【冷蔵庫にある余り物】${stock}
@@ -295,18 +305,22 @@ export default function BudgetBiteAI() {
 【出力フォーマット】
 ### ${targetDateStr} の献立計画
 **メニュー名**
-・手順やコツをここに簡潔に書く（ここで使う調味料や米は、下のリストに全て漏れなく連動させること）
+・手順やコツをここに簡潔に書く
 
 ## 🛒 買い物リスト
 ### 【肉・魚類】
 - 食材名
 ### 【野菜・その他】
-- 食材名（米を食べる・使う場合は必ず「- 米」をここに載せること）
+- 食材名
 ### 【調味料】
-- 調味料名（塩、油、醤油、砂糖、みりん、酒、ガラスープなど、調理手順に登場するすべての調味料を「絶対に1つも隠さず」1行ずつの箇条書きで全件出力すること）`;
+- 調味料名`;
       
       const result = await model.generateContent(prompt);
-      const text = result.response.text();
+      let text = result.response.text();
+      
+      // 💥 プログラムによる強制言い訳排除フィルター発動！
+      text = filterExcuseLines(text);
+
       setAiResponse(text); 
       setArchivedMenu(text);
       setActiveTab('menu');
@@ -316,7 +330,7 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 💡 週一括プランニング機能（隠蔽サボり・常備品想定を根絶する最強プロンプト）
+  // 💡 週一括プランニング機能
   const askGeminiWeekly = async () => {
     const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
     if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
@@ -344,13 +358,6 @@ export default function BudgetBiteAI() {
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
       const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。
-不要な挨拶や説明は一切省き、指定フォーマットを厳密に守ってください。
-
-【🚨🚨最重要：常備品の隠蔽・省略を絶対に許さない死守ルール🚨🚨】
-1. あなたは「常備品をリストに書かないサボり癖」があります。それを今ここで完全に捨ててください。
-2. すべての日の調理手順の中で、1滴でも1つまみでも使用する調味料や主食（塩、コショウ、砂糖、醤油、みりん、酒、酢、サラダ油、ごま油、鶏ガラスープの素、だしの素、味噌、ポン酢、マヨネーズ、ケチャップ、にんにくチューブ、生姜チューブ、そして【米】）は、すべて例外なく1つずつ独立した「- 項目名」として合計買い物リストに合算して出しなさい。
-3. 「家にあるだろう」という勝手な判断によるリストからの消去（隠蔽）は絶対に厳禁。
-4. カッコ書きでの言い訳（例：「その他定番調味料は〜」など）も一切認めません。
 
 【計画対象日】${targetDaysLine}
 【冷蔵庫にある余り物】${stock}
@@ -365,12 +372,15 @@ export default function BudgetBiteAI() {
 ### 【肉・魚類】
 - 食材名
 ### 【野菜・その他】
-- 食材名（米を消費するなら必ず「- 米」をここに独立した項目として載せること）
+- 食材名
 ### 【調味料】
-- 調味料名（使用する塩、醤油、油、みりん、酒、砂糖、ガラスープ等、手順に出てくる全ての調味料を「絶対に1つも隠さず」1行ずつの箇条書きで全件出力すること）`;
+- 調味料名`;
 
       const result = await model.generateContent(prompt);
-      const fullText = result.response.text();
+      let fullText = result.response.text();
+
+      // 💥 プログラムによる強制言い訳排除フィルター発動！
+      fullText = filterExcuseLines(fullText);
 
       const shoppingPart = fullText.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
 
@@ -399,7 +409,7 @@ export default function BudgetBiteAI() {
       setAiResponse(fullText);
       setArchivedMenu(fullText);
       setActiveTab('menu');
-      alert("選択した曜日すべての献立計画を一括作成したよ！調味料や米の隠蔽サボりを完全に根絶したよ。");
+      alert("選択した曜日すべての献立計画を一括作成したよ！プログラム側で常備品の言い訳行を完全消去したよ。");
       fetchBudgetData();
 
     } catch (err: any) { alert(err.message); }
@@ -463,7 +473,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.5</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.6</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
