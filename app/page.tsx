@@ -27,7 +27,6 @@ export default function BudgetBiteAI() {
   const [itemName, setItemName] = useState("");
   const [expense, setExpense] = useState("");
   const [stock, setStock] = useState(""); 
-  // 🌟 初期表示のリクエスト文をはじめから「社会人・3500円時短仕様」に最適化したよ！
   const [userRequest, setUserRequest] = useState("1週間3500円程度で、平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
   const [history, setHistory] = useState<{ id: string, name: string, price: number, date: string }[]>([]);
   const [aiResponse, setAiResponse] = useState("");
@@ -39,9 +38,9 @@ export default function BudgetBiteAI() {
   // 🛒 買い物リストのチェック状態を管理するステート
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
 
-  // Geminiの初期化 (最新 of 最新の 2.0-flashモデルを使用)
+  // Geminiの初期化
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   // ==========================================
   // 2. 起動時にSupabaseから過去のデータを自動読み込み
@@ -50,26 +49,42 @@ export default function BudgetBiteAI() {
     fetchBudgetData();
   }, []);
 
-  // AIの回答が更新されたら、買い物リストのオブジェクト構造をパースして生成する
+  // AIの回答が更新されたら、買い物リストをパースする
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]);
       return;
     }
 
-    const shoppingText = '## 🛒 買い物リスト' + (aiResponse.split('## 🛒 買い物リスト')[1] || '');
+    const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
+    if (parts.length < 2) {
+      setShoppingSections([]);
+      return;
+    }
+    
+    const shoppingText = parts[1];
     const lines = shoppingText.split('\n');
     
-    let currentSection = "";
     const parsedSections: ShoppingSection[] = [];
+    let currentSection = "";
     let lastSectionIndex = -1;
 
     lines.forEach((line, lineIdx) => {
-      const trimmed = line.trim();
+      let trimmed = line.trim();
       if (!trimmed) return;
 
-      if (trimmed.startsWith('###') || trimmed.startsWith('##')) {
-        currentSection = trimmed.replace(/###|##/g, '').trim();
+      // 買い物リストタブの中では応援メッセージの手前でパースを止める
+      if (trimmed.includes("だいちゃんへ") || trimmed.includes("応援メッセージ")) {
+        return;
+      }
+
+      const isHeader = 
+        trimmed.startsWith('###') || 
+        trimmed.startsWith('##') || 
+        (trimmed.startsWith('**') && trimmed.endsWith('**') && (trimmed.includes('【') || trimmed.includes('類')));
+
+      if (isHeader) {
+        currentSection = trimmed.replace(/###|##|\*\*/g, '').trim();
         parsedSections.push({ title: currentSection, items: [] });
         lastSectionIndex = parsedSections.length - 1;
       } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
@@ -82,17 +97,20 @@ export default function BudgetBiteAI() {
           });
         }
       } else {
-        if (lastSectionIndex >= 0 && parsedSections[lastSectionIndex].items.length > 0) {
-          parsedSections[lastSectionIndex].items.push({
-            id: `item-${lastSectionIndex}-${lineIdx}`,
-            name: trimmed,
-            checked: false
-          });
+        if (lastSectionIndex >= 0) {
+          if (trimmed.length < 15 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立')) {
+            parsedSections[lastSectionIndex].items.push({
+              id: `item-${lastSectionIndex}-${lineIdx}`,
+              name: trimmed,
+              checked: false
+            });
+          }
         }
       }
     });
 
-    setShoppingSections(parsedSections);
+    const filteredSections = parsedSections.filter(sec => sec.items.length > 0);
+    setShoppingSections(filteredSections);
   }, [aiResponse]);
 
   const fetchBudgetData = async () => {
@@ -126,12 +144,9 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // ==========================================
-  // 3. 出費を記録してSupabaseに保存する
-  // ==========================================
+  // 出費を記録
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-
     const price = parseInt(expense);
     const name = itemName || "買い物";
 
@@ -169,9 +184,7 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // ==========================================
-  // 4. データをリセットして初期状態に戻す
-  // ==========================================
+  // データリセット
   const resetData = async () => {
     if (confirm("データをリセットして、今月の予算を¥25,000に戻しますか？（過去のデータはすべて消去されます）")) {
       const { error } = await supabase
@@ -191,9 +204,7 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // ==========================================
-  // 5. Geminiにおまかせ献立を相談する
-  // ==========================================
+  // Gemini相談
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -206,10 +217,10 @@ export default function BudgetBiteAI() {
       ・追加のリクエスト：「${userRequest}」
       
       【出力のルール】
-      1. 献立は、平日の夜の負担を極限まで減らす工夫（週末の作り置きや、平日の帰宅後でもワンパン・レンジで即できるものなど）を取り入れた1週間分を提案してください。
+      1. 献立は、平日の夜の負担を極限まで減らす工夫を取り入れた1週間分を提案してください。
       2. 買い物リストのセクションの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
       3. 不足している食材を、買いまわりしやすいように「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で綺麗に出力してください。
-      4. 最後に、仕事を頑張るだいちゃんへの温かい応援メッセージを添えて、見やすいマークダウン形式で回答ね。`;
+      4. 最後に、仕事を頑張るだいちゃんへの温かい応援メッセージを添えて、見やすいマークダウン形式で回答してね。`;
       
       const result = await model.generateContent(prompt);
       const text = result.response.text();
@@ -233,16 +244,14 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 🛒 チェックボックスのON/OFFを切り替える関数
+  // チェックON/OFF
   const toggleCheck = (sectionIdx: number, itemIdx: number) => {
     const updated = [...shoppingSections];
     updated[sectionIdx].items[itemIdx].checked = !updated[sectionIdx].items[itemIdx].checked;
     setShoppingSections(updated);
   };
 
-  // ==========================================
-  // 6. 画面の見た目（UI）
-  // ==========================================
+  // 画面表示
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
@@ -306,7 +315,7 @@ export default function BudgetBiteAI() {
           </button>
         </div>
 
-        {/* 最近の履歴（直近3件を表示） */}
+        {/* 最近の履歴 */}
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800">
             <p className="text-[10px] text-gray-500 px-2 mb-2 uppercase tracking-widest font-bold">Recent History</p>
@@ -324,12 +333,11 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* AIの回答表示エリア（タブ切り替え版） */}
+        {/* AIの回答表示エリア */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-cyan-400 font-bold mb-3 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
             
-            {/* タブ選択ボタンの配置 */}
             <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button 
                 type="button"
@@ -347,10 +355,10 @@ export default function BudgetBiteAI() {
               </button>
             </div>
 
-            {/* 表示エリア */}
             <div className="text-gray-300 text-sm leading-relaxed max-h-[400px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
-                <div className="whitespace-pre-wrap">{aiResponse.split('## 🛒 買い物リスト')[0]}</div>
+                // 🌟【修正箇所】献立タブでは、途中で切らずにGeminiの返答（応援メッセージ含む全文章）を丸ごと表示するよ！
+                <div className="whitespace-pre-wrap">{aiResponse}</div>
               ) : (
                 <div className="space-y-4">
                   {shoppingSections.map((sec, secIdx) => (
