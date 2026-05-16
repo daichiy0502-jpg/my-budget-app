@@ -205,7 +205,7 @@ export default function BudgetBiteAI() {
 - 食材名
 
 ### 【常備しておきたい調味料】
-- 今回の料理で使う、必要なすべての調味料（塩、醤油、砂糖、みりん、油、マヨネーズ、ポン酢、にんにくチューブなど、必要なものを箇条書きで出力してください）`;
+- 調味料`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
