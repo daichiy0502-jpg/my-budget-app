@@ -10,60 +10,74 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 interface ShoppingItem { id: string; name: string; checked: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
-interface HistoryItem { id: string; name: string; price: number; date: string; }
+interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; }
 
 type ActiveTabType = 'menu' | 'shopping';
-// 💡 モードの型定義
 type CookingModeType = '通常' | '時短' | '贅沢';
 
+// 📅 曜日とインデックスの定義
 const DAYS_OF_WEEK = ['月', '火', '水', '木', '金', '土', '日'];
+const DAY_MAP_ENG_TO_JA: Record<number, string> = { 0: '日', 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土' };
 
 export default function BudgetBiteAI() {
-  // 💡 初期設定予算を管理（初期値は25000、localStorageから復元）
+  // 💰 予算管理用のステート
   const [baseBudget, setBaseBudget] = useState<number>(25000);
   const [isEditingBaseBudget, setIsEditingBaseBudget] = useState(false);
   const [inputBaseBudget, setInputBaseBudget] = useState("");
-
   const [budget, setBudget] = useState(25000);
+
+  // 📝 入力フォーム用のステート
   const [itemName, setItemName] = useState("");
   const [expense, setExpense] = useState("");
   const [stock, setStock] = useState(""); 
   const [userRequest, setUserRequest] = useState("平日の夜に時間がなくてもパパッと作れる時短レシピにして！");
   
+  // 📅 カレンダー・曜日制御用のステート
   const [selectedDays, setSelectedDays] = useState<string[]>(['月', '火', '水', '木', '金']);
-  // 💡 曜日ごとのモードを管理するオブジェクト（初期値はすべて「通常」）
   const [dayModes, setDayModes] = useState<Record<string, CookingModeType>>({
     '月': '通常', '火': '通常', '水': '通常', '木': '通常', '金': '通常', '土': '通常', '日': '通常'
   });
+  // 💡 今日の曜日を初期値としてセット（今日優先UX）
+  const [activeCalendarDay, setActiveCalendarDay] = useState<string>('月');
 
+  // 🤖 AI応答・パース用のステート
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTabType>('menu');
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
-  const [activeDay, setActiveDay] = useState<string>("");
+  
+  // 🔧 インライン編集用ステート
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingPrice, setEditingPrice] = useState<string>("");
 
-  // 💡 コンポーネント読み込み時にlocalStorageから初期予算を復元
+  // 🌟 初期化処理
   useEffect(() => {
+    // 💡 1. 基準予算の復元
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
       const parsed = parseInt(savedBase);
       if (!isNaN(parsed)) setBaseBudget(parsed);
     }
+
+    // 💡 2. 今日優先UX: 現在の実際の曜日を調べてカレンダーの初期選択にする
+    const currentDayIndex = new Date().getDay(); // 0が日曜日、1が月曜日...
+    const currentJaDay = DAY_MAP_ENG_TO_JA[currentDayIndex];
+    setActiveCalendarDay(currentJaDay);
+
     fetchBudgetData();
   }, []);
 
-  // 💡 baseBudgetが変更されたら残高を再計算する
+  // 基準予算が変わったら残高を再計算
   useEffect(() => {
     fetchBudgetData();
   }, [baseBudget]);
 
+  // AIのテキストが変わるたびに「献立」と「買い物リスト」に自動分解するパースロジック
   useEffect(() => {
     if (!aiResponse) {
-      setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
+      setShoppingSections([]); setMenuDays([]); return;
     }
     try {
       // 📅 1. 献立テキストの曜日分解
@@ -97,7 +111,6 @@ export default function BudgetBiteAI() {
         parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
       }
       setMenuDays(parsedDays);
-      if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
       // 🛒 2. 買い物リストのパース
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
@@ -123,7 +136,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.length > 0 && itemNameClean.length < 20) {
               parsedSections[currentSectionIdx].items.push({ 
@@ -141,29 +154,37 @@ export default function BudgetBiteAI() {
     } catch (e) { console.error(e); }
   }, [aiResponse]);
 
-  // 💡 設定されたbaseBudgetを基準に引き算を行う
+  // 🗄️ Supabaseデータ取得と予算計算
   const fetchBudgetData = async () => {
     try {
       const { data } = await supabase.from('budgets').select('*').order('created_at', { ascending: false });
       if (data) {
         const totalExpense = data.reduce((sum, item) => sum + (item.expense_price || 0), 0);
         
-        // 基準予算から引く
         const currentSavedBase = localStorage.getItem('budgetbite_base_budget');
         const activeBase = currentSavedBase ? parseInt(currentSavedBase) : baseBudget;
         setBudget(activeBase - totalExpense);
 
-        setHistory(data.filter(item => item.expense_price > 0).map((item): HistoryItem => ({
-          id: item.id, name: item.item_name || "買い物", price: item.expense_price,
+        setHistory(data.filter(item => item.expense_price > 0 || item.item_name === "AI相談").map((item): HistoryItem => ({
+          id: item.id, 
+          name: item.item_name || "買い物", 
+          price: item.expense_price,
+          rawAiResponse: item.ai_response || undefined,
           date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
                 new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
         })));
+        
         const lastAi = data.find(item => item.ai_response);
-        if (lastAi && !aiResponse) { setAiResponse(lastAi.ai_response); setStock(lastAi.stock_items || ""); setUserRequest(lastAi.user_request || userRequest); }
+        if (lastAi && !aiResponse) { 
+          setAiResponse(lastAi.ai_response); 
+          setStock(lastAi.stock_items || ""); 
+          setUserRequest(lastAi.user_request || userRequest); 
+        }
       }
     } catch (e) { console.error(e); }
   };
 
+  // 💸 出費の手動追加
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault(); const price = parseInt(expense); const name = itemName || "買い物";
     if (isNaN(price) || price <= 0) return alert("金額を正しく入力してね！");
@@ -184,7 +205,7 @@ export default function BudgetBiteAI() {
   };
 
   const resetData = async () => {
-    if (!confirm("リセットする？")) return;
+    if (!confirm("データをフルリセットする？")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); fetchBudgetData(); }
   };
@@ -198,12 +219,10 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // 💡 曜日ごとのモードを切り替える関数
   const handleModeChange = (day: string, mode: CookingModeType) => {
     setDayModes(prev => ({ ...prev, [day]: mode }));
   };
 
-  // 💡 設定予算を保存する関数
   const saveBaseBudget = () => {
     const parsed = parseInt(inputBaseBudget);
     if (isNaN(parsed) || parsed < 0) return alert("正しい予算額を入力してね！");
@@ -212,6 +231,45 @@ export default function BudgetBiteAI() {
     setIsEditingBaseBudget(false);
   };
 
+  // 💡 アイデア1: 「家にある！」ストック自動連携システム
+  const toggleShoppingItemWithStockSync = (secIdx: number, itemIdx: number) => {
+    const updated = [...shoppingSections];
+    const targetItem = updated[secIdx].items[itemIdx];
+    
+    // チェック状態を反転
+    targetItem.checked = !targetItem.checked;
+    
+    // チェックを入れた（＝購入した・家にある状態になった）場合、上の「余っている食材」に自動追記
+    if (targetItem.checked) {
+      setStock(prev => {
+        const cleanPrev = prev.trim();
+        if (!cleanPrev) return targetItem.name;
+        // すでに登録されていなければカンマ区切りで追記
+        if (cleanPrev.includes(targetItem.name)) return prev;
+        return `${cleanPrev}, ${targetItem.name}`;
+      });
+    } else {
+      // チェックを外した場合、ストックから名前を除外する
+      setStock(prev => {
+        return prev.split(/,\s*/)
+          .filter(name => name.trim() !== targetItem.name)
+          .join(', ');
+      });
+    }
+    
+    setShoppingSections(updated);
+  };
+
+  // 💡 アイデア3: 過去プランのワンタップ復元機能
+  const restorePastPlan = (rawAiText: string) => {
+    if (!rawAiText) return;
+    if (confirm("この過去の献立・買い物リストを画面に復元する？")) {
+      setAiResponse(rawAiText);
+      setActiveTab('menu');
+    }
+  };
+
+  // 🤖 AIへの相談通信処理
   const askGemini = async () => {
     if (selectedDays.length === 0) return alert("献立を作成する曜日をどれか選んでね！");
     setLoading(true);
@@ -219,7 +277,6 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 📅 曜日ごとの個別指示プロンプトの組み立て
       const dayDirectives = selectedDays.map(d => {
         const mode = dayModes[d];
         let directive = "バランスの良い通常メニュー";
@@ -259,7 +316,7 @@ ${formatDaysPrompt}
 - 調味料名
 - 調味料名
 - 調味料名
-※注意：上記の指定された曜日の手順の中で登場する調味料（醤油、酒、みりん、砂糖、塩、片栗粉、油、ポン酢など）は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。`;
+※注意：上記の指定された曜日の手順の中で登場する調味料（醤油、酒、みりん、砂糖、塩、片栗粉、油、ポン酢など）は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇取りにしてください。解説や余計な文章は一切不要です。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
@@ -269,6 +326,7 @@ ${formatDaysPrompt}
     setLoading(false);
   };
 
+  // 📝 レシピ本文のテキスト装飾マッピング
   const formatMenuContent = (rawText: string) => {
     return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
@@ -287,17 +345,18 @@ ${formatDaysPrompt}
       <header className="max-w-md mx-auto mb-8 text-center">
         <h1 className="text-4xl font-bold text-cyan-400 tracking-tight italic">BudgetBite <span className="text-xs bg-cyan-900 text-cyan-200 px-2 py-0.5 rounded-full not-italic">AI</span></h1>
       </header>
+      
       <main className="max-w-md mx-auto space-y-6">
         
-        {/* 💳 予算管理カード（設定予算の編集機能付き） */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center relative group">
+        {/* 💳 予算カード（上限のインライン設定機能） */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center relative">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-1 font-bold">Remaining Budget</p>
           <div className="text-5xl font-mono text-white my-2 font-bold">¥{budget.toLocaleString()}</div>
           
           <div className="text-[10px] text-gray-500 font-mono mt-1 flex items-center justify-center gap-1">
             {isEditingBaseBudget ? (
               <div className="flex items-center gap-1 bg-black p-1 rounded border border-zinc-800 z-10">
-                <input type="number" value={inputBaseBudget} onChange={(e) => setInputBaseBudget(e.target.value)} className="w-20 bg-zinc-900 text-white text-center rounded border border-zinc-700 font-mono py-0.5 text-xs" placeholder="25000" autoFocus />
+                <input type="number" value={inputBaseBudget} onChange={(e) => setInputBaseBudget(e.target.value)} className="w-20 bg-zinc-900 text-white text-center rounded border border-zinc-700 font-mono py-0.5 text-xs" autoFocus />
                 <button type="button" onClick={saveBaseBudget} className="text-green-400 font-bold px-1 text-[11px]">OK</button>
                 <button type="button" onClick={() => setIsEditingBaseBudget(false)} className="text-gray-500 px-1 text-[11px]">✕</button>
               </div>
@@ -314,6 +373,7 @@ ${formatDaysPrompt}
           </div>
         </div>
 
+        {/* 💰 出費手動入力フォーム */}
         <form onSubmit={addExpense} className="space-y-2 bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800">
           <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500" />
           <div className="flex gap-2">
@@ -322,9 +382,10 @@ ${formatDaysPrompt}
           </div>
         </form>
 
+        {/* 🛠️ 献立プランニング・AIコントロールハブ */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
           
-          {/* 📅 曜日・こだわりモード選択用UI */}
+          {/* 📅 カレンダー・こだわりモード管理エリア */}
           <div className="space-y-3">
             <label className="text-xs font-bold text-gray-400 block">📅 献立の曜日とこだわりモード</label>
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 bg-zinc-950 p-2 rounded-2xl border border-zinc-900">
@@ -332,10 +393,11 @@ ${formatDaysPrompt}
                 const isSelected = selectedDays.includes(day);
                 return (
                   <div key={day} className={`flex items-center justify-between p-1.5 rounded-xl border transition-all ${isSelected ? 'bg-zinc-900/60 border-zinc-800' : 'bg-transparent border-transparent opacity-40'}`}>
-                    {/* 曜日ON/OFFボタン */}
+                    
+                    {/* 曜日選択トグルボタン */}
                     <button type="button" onClick={() => toggleDay(day)} className={`px-3 py-1.5 rounded-lg font-bold text-xs ${isSelected ? 'bg-cyan-900 text-cyan-300 border border-cyan-800/40' : 'bg-zinc-900 text-gray-600'}`}>{day}曜</button>
                     
-                    {/* モード切り替え（3択スライド風） */}
+                    {/* 通常・時短・贅沢スライダーボタン */}
                     {isSelected && (
                       <div className="flex gap-0.5 bg-black p-0.5 rounded-lg border border-zinc-800/60">
                         {(['通常', '時短', '贅沢'] as CookingModeType[]).map(mode => (
@@ -349,53 +411,84 @@ ${formatDaysPrompt}
             </div>
           </div>
 
-          <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500" />
-          <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none focus:border-cyan-500" />
+          {/* 余り物とリクエストの調整 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 block">📥 冷蔵庫のストック状況</label>
+            <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材（買い物チェックで自動追記）" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500" />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 block">💡 AIへの個別リクエスト</label>
+            <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none focus:border-cyan-500" />
+          </div>
+
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">{loading ? "Geminiが考え中..." : "AIコンシェルジュに相談する"}</button>
         </div>
 
+        {/* 🔄 過去の履歴 & プラン復元エリア */}
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
+            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider px-1">📊 最近の履歴・プラン記録</p>
             {history.slice(0, 5).map(item => (
               <div key={item.id} className="flex justify-between items-center border-b border-zinc-900 pb-2 last:border-0">
-                <div className="flex flex-col"><span className="text-gray-300 text-sm">{item.name}</span><span className="text-[9px] text-gray-600 font-mono">{item.date}</span></div>
+                <div className="flex flex-col">
+                  <span className="text-gray-300 text-sm font-medium">{item.name}</span>
+                  <span className="text-[9px] text-gray-600 font-mono">{item.date}</span>
+                </div>
+                
                 <div className="flex items-center gap-3">
-                  {editingId === item.id ? (
-                    <div className="flex items-center gap-1.5">
-                      <input type="number" value={editingPrice} onChange={(e) => setEditingPrice(e.target.value)} className="w-20 bg-zinc-950 border border-cyan-800 px-2 py-1 rounded text-right text-white text-xs" autoFocus />
-                      <button onClick={() => updateExpensePrice(item.id)} className="text-xs text-green-400 bg-green-950/40 px-2 py-1 rounded border border-green-900">保存</button>
-                    </div>
-                  ) : (
+                  {/* 💡 アイデア3: 履歴が「AI相談」だった場合、ワンタップで丸ごと復元できるボタンを表示 */}
+                  {item.rawAiResponse && (
+                    <button onClick={() => restorePastPlan(item.rawAiResponse!)} className="text-xs bg-cyan-950/80 text-cyan-400 px-2 py-1 rounded border border-cyan-900/60 hover:bg-cyan-900 transition-colors">🔄復元</button>
+                  )}
+                  
+                  {item.price > 0 && (
                     <>
-                      <span className="text-red-400 font-mono font-bold text-sm">-¥{item.price.toLocaleString()}</span>
-                      <button onClick={() => { setEditingId(item.id); setEditingPrice(item.price.toString()); }} className="text-xs">✏️</button>
-                      <button onClick={() => deleteExpense(item.id)} className="text-xs">🗑️</button>
+                      {editingId === item.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <input type="number" value={editingPrice} onChange={(e) => setEditingPrice(e.target.value)} className="w-20 bg-zinc-950 border border-cyan-800 px-2 py-1 rounded text-right text-white text-xs" autoFocus />
+                          <button onClick={() => updateExpensePrice(item.id)} className="text-xs text-green-400 bg-green-950/40 px-2 py-1 rounded border border-green-900">保存</button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-red-400 font-mono font-bold text-sm">-¥{item.price.toLocaleString()}</span>
+                          <button onClick={() => { setEditingId(item.id); setEditingPrice(item.price.toString()); }} className="text-xs opacity-60 hover:opacity-100">✏️</button>
+                        </>
+                      )}
                     </>
                   )}
+                  <button onClick={() => deleteExpense(item.id)} className="text-xs opacity-60 hover:opacity-100">🗑️</button>
                 </div>
               </div>
             ))}
           </div>
         )}
 
+        {/* 🍽️ AI献立・買い物リスト表示用カード */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
+            {/* メインタブ切り替え */}
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
               <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
             </div>
             
-            <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
+            <div className="text-gray-300 text-sm max-h-[420px] overflow-y-auto pr-1">
               {activeTab === 'menu' && (
                 <div className="space-y-4">
                   {menuDays.length > 0 ? (
                     <>
+                      {/* 💡 アイデア4: カレンダー連動型。今日（または選んだ日）の曜日のボタンが自動で光る */}
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-3 py-1.5 rounded-md font-bold text-xs flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.day}</button>
+                          <button key={md.day} onClick={() => setActiveCalendarDay(md.day)} className={`px-3 py-1.5 rounded-md font-bold text-xs flex-1 transition-all ${activeCalendarDay === md.day ? 'bg-cyan-950 text-cyan-400 border border-cyan-800/80 shadow' : 'text-gray-500'}`}>{md.day}曜</button>
                         ))}
                       </div>
-                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">{formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}</div>
+                      
+                      {/* 選択されている曜日の献立手順をフォーマット表示 */}
+                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">
+                        {formatMenuContent(menuDays.find(d => d.day === activeCalendarDay)?.content || "この曜日の献立はありません。カレンダーから他の曜日を選んでみてね！")}
+                      </div>
                     </>
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
@@ -412,10 +505,8 @@ ${formatDaysPrompt}
                         {sec.items.length > 0 ? (
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             {sec.items.map((item, itemIdx) => (
-                              <button key={item.id} onClick={() => {
-                                const updated = [...shoppingSections]; updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; setShoppingSections(updated);
-                              }} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
-                                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                              <button key={item.id} onClick={() => toggleShoppingItemWithStockSync(secIdx, itemIdx)} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 transition-all ${item.checked ? 'text-gray-600 line-through bg-cyan-950/10 border-cyan-950/30' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border transition-all ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
                                 <span className="truncate">{item.name}</span>
                               </button>
                             ))}
@@ -433,7 +524,12 @@ ${formatDaysPrompt}
             </div>
           </div>
         )}
-        <div className="text-center pt-8"><button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold">Reset Data</button></div>
+
+        {/* フルリセットボタン */}
+        <div className="text-center pt-8">
+          <button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold hover:text-red-900 transition-colors">Reset All Data</button>
+        </div>
+
       </main>
     </div>
   );
