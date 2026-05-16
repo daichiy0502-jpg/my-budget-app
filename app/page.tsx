@@ -96,7 +96,7 @@ export default function BudgetBiteAI() {
           if (isBulletPoint) {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
             
-            // 20文字以上の余計な指示文や解説文が入ってきた場合はボタンにしないガード
+            // 20文字以上の余計な行を弾くガード
             if (itemNameClean.length > 0 && itemNameClean.length < 20) {
               parsedSections[currentSectionIdx].items.push({ 
                 id: `item-${currentSectionIdx}-${lineIdx}`, 
@@ -161,7 +161,7 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 💡 調味料名がバラバラの1行ずつできちんと出力されるように指示を最適化！
+      // 💡 定番調味料（醤油・酒・みりん・片栗粉など）も絶対に省略せずにすべて箇条書きさせるプロンプト
       const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
 出力の最初から最後まで、フォーマット以外の挨拶、解説、応援メッセージなどの雑談は【絶対に】一切含めないでください。リストの直後で出力を即座に終了してください。
 
@@ -205,7 +205,7 @@ export default function BudgetBiteAI() {
 - 調味料名
 - 調味料名
 - 調味料名
-※解説や指示の文章はここに入れないで、純粋な調味料の名前だけを1行ずつ箇条書きにしてください。`;
+※注意：上記の月曜〜金曜の手順の中で登場する調味料（醤油、酒、みりん、砂糖、塩、片栗粉、油、ポン酢など）は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
