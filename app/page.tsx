@@ -86,11 +86,9 @@ export default function BudgetBiteAI() {
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
       
-      // だいちゃんへ、または応援メッセージというキーワード以降をガバッと取る
       const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
-        // 買い物リストや献立のパースに混ざらないよう、本体テキストからメッセージ部分を一旦削る
         cleanedResponse = aiResponse.replace(extractedMsg, "");
       }
 
@@ -187,9 +185,10 @@ export default function BudgetBiteAI() {
         } else {
           if (lastSectionIndex >= 0) {
             if (trimmed.length < 25 && !trimmed.startsWith('両親') && !trimmed.startsWith('この献立')) {
+              // 🌟【修正】タイポのあった箇所の正規表現をきれいに修正
               parsedSections[lastSectionIndex].items.push({
                 id: `item-${lastSectionIndex}-${lineIdx}`,
-                name: trimmed.replace(/\*\規|\\|\*\*/g, '').trim(),
+                name: trimmed.replace(/\*\*/g, '').trim(),
                 checked: false
               });
             }
@@ -216,11 +215,9 @@ export default function BudgetBiteAI() {
       if (error) return;
 
       if (data) {
-        // 全出費の合計を引いて現在の正しい残高を計算（ベースは25000円）
         const totalExpense = data.reduce((sum, item) => sum + (item.expense_price || 0), 0);
         setBudget(25000 - totalExpense);
         
-        // 履歴一覧を作成
         const formattedHistory = data
           .filter(item => item.expense_price > 0)
           .map((item): HistoryItem => ({
@@ -232,7 +229,6 @@ export default function BudgetBiteAI() {
           }));
         setHistory(formattedHistory);
 
-        // 最新のAIレスポンスがあれば復元
         const lastAiRecord = data.find(item => item.ai_response);
         if (lastAiRecord && !aiResponse) {
           setAiResponse(lastAiRecord.ai_response);
@@ -260,7 +256,7 @@ export default function BudgetBiteAI() {
       const { error } = await supabase
         .from('budgets')
         .insert([{
-          budget_amount: budget - price, // 互換性のために一応入れつつ、計算はtotalで行う
+          budget_amount: budget - price, 
           item_name: name,
           expense_price: price,
           stock_items: stock,
@@ -282,7 +278,7 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // 🛠️ 変更機能：金額の更新
+  // 金額の更新
   const updateExpensePrice = async (id: string) => {
     const newPrice = parseInt(editingPrice);
     if (isNaN(newPrice) || newPrice < 0) {
@@ -303,13 +299,13 @@ export default function BudgetBiteAI() {
 
       setEditingId(null);
       setEditingPrice("");
-      await fetchBudgetData(); // 残高と履歴を自動再計算
+      await fetchBudgetData(); 
     } catch (err) {
       console.error(err);
     }
   };
 
-  // 🗑️ 削除機能：履歴の削除
+  // 履歴の削除
   const deleteExpense = async (id: string) => {
     if (!confirm("この出費記録を削除してもいい？（予算は自動で戻るよ）")) return;
 
@@ -324,7 +320,7 @@ export default function BudgetBiteAI() {
         return;
       }
 
-      await fetchBudgetData(); // 残高と履歴を自動再計算
+      await fetchBudgetData(); 
     } catch (err) {
       console.error(err);
     }
@@ -362,7 +358,7 @@ export default function BudgetBiteAI() {
       1. 各曜日の献立の見出しは、必ず「### 月曜日」「### 火曜日」のように【曜日名】を明記して開始してください。
       2. 曜日ごとの中身は、まず「**メニュー名**」を書き、その下に「・ステップ1… ・ステップ2…」のように簡単に行を変えて作り方を書いてください。
       3. 買い物リストの始まりには、必ず「## 🛒 買い物リスト」という見出しを書いてください。
-      4. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇条書き（「- 食材名」形式）で出力してください。
+      4. 不足食材は「### 【肉・魚類】」「### 【野菜類】」などのカテゴリ別の箇取り箇条書き（「- 食材名」形式）で出力してください。
       5. 最後に必ず、「だいちゃんへ」から始まる温かい応援メッセージを添えてね。`;
       
       const result = await model.generateContent(prompt);
@@ -397,15 +393,13 @@ export default function BudgetBiteAI() {
     setShoppingSections(updated);
   };
 
-  // 🪄 テキストを綺麗にするヘルパー関数（マークダウン記号などを除去）
+  // 🪄 テキストを綺麗にするヘルパー関数
   const formatMenuContent = (rawText: string) => {
-    // 曜日見出し行（### 月曜日 など）を除去して、見やすくパース
     const lines = rawText.split('\n').filter(l => !l.trim().startsWith('###'));
     return lines.map((line, idx) => {
       const trimmed = line.trim();
       if (!trimmed) return <div key={idx} className="h-2"></div>;
 
-      // メニュー名（**で囲まれている、もしくはメイン料理っぽい行）
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
         return (
           <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 flex items-center gap-1.5 border-l-2 border-cyan-500 pl-2">
@@ -413,7 +407,6 @@ export default function BudgetBiteAI() {
           </div>
         );
       }
-      // 作り方の箇条書き（・や - や 数字から始まる行）
       if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
         return (
           <div key={idx} className="text-xs text-gray-300 pl-4 py-0.5 leading-relaxed bg-zinc-900/40 rounded my-0.5">
@@ -421,7 +414,6 @@ export default function BudgetBiteAI() {
           </div>
         );
       }
-      // 通常のテキスト
       return <div key={idx} className="text-xs text-gray-400 pl-2">{trimmed}</div>;
     });
   };
@@ -486,7 +478,7 @@ export default function BudgetBiteAI() {
           </button>
         </div>
 
-        {/* 📋 パワーアップした履歴（編集・削除機能付き） */}
+        {/* 📋 履歴（編集・削除機能付き） */}
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800">
             <p className="text-[10px] text-gray-500 px-2 mb-2 uppercase tracking-widest font-bold">Recent History</p>
@@ -500,7 +492,7 @@ export default function BudgetBiteAI() {
                   
                   <div className="flex items-center gap-3">
                     {editingId === item.id ? (
-                      <div className="flex items-center gap-1.5 animate-fade-in">
+                      <div className="flex items-center gap-1.5">
                         <input 
                           type="number" value={editingPrice} onChange={(e) => setEditingPrice(e.target.value)}
                           className="w-20 bg-zinc-950 border border-cyan-800 px-2 py-1 rounded text-right font-mono text-white text-xs"
@@ -512,7 +504,6 @@ export default function BudgetBiteAI() {
                     ) : (
                       <>
                         <span className="text-red-400 font-mono font-bold text-sm">-¥{item.price.toLocaleString()}</span>
-                        {/* 操作ボタン（スマホでも押しやすいよう常時表示） */}
                         <div className="flex items-center gap-1">
                           <button type="button" onClick={() => { setEditingId(item.id); setEditingPrice(item.price.toString()); }}
                             className="text-gray-500 hover:text-cyan-400 p-1 text-xs transition-colors" title="金額を変更"
@@ -536,7 +527,7 @@ export default function BudgetBiteAI() {
 
         {/* AI結果表示 */}
         {aiResponse && (
-          <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="bg-zinc-900 border border-cyan-900/30 rounded-3xl p-5 shadow-2xl">
             <div className="text-cyan-400 font-bold mb-3 flex items-center gap-2 border-b border-zinc-800 pb-2">✨ Geminiの提案</div>
             
             {/* メインタブ */}
@@ -580,10 +571,11 @@ export default function BudgetBiteAI() {
                       </div>
                     </>
                   ) : (
-                    <div className="whitespace-pre-wrap text-xs">{cleanedResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
+                    /* 🌟【超重要バグ修正】未パース時に aiResponse を参照するように変更（変数エラー回避） */
+                    <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
 
-                  {/* 💌 応援メッセージ（見失わないよう独立したカード枠に！） */}
+                  {/* 💌 応援メッセージ */}
                   {supportMessage && (
                     <div className="mt-6 bg-gradient-to-b from-zinc-950 to-zinc-900 border border-dashed border-cyan-900/60 p-4 rounded-2xl text-cyan-300 font-medium whitespace-pre-wrap text-xs leading-relaxed shadow-inner">
                       💡 {supportMessage.replace(/^だいちゃんへ[：:\n]*/i, 'だいちゃんへ：\n')}
@@ -618,8 +610,9 @@ export default function BudgetBiteAI() {
                       </div>
                     ))
                   ) : (
+                    /* 🌟【超重要バグ修正】ここも aiResponse を参照するように修正 */
                     <div className="whitespace-pre-wrap text-xs">
-                      {cleanedResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "買い物リストの読み込みに失敗しました。"}
+                      {aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "買い物リストの読み込みに失敗しました。"}
                     </div>
                   )}
                 </div>
