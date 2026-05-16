@@ -70,15 +70,13 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
 
-      // 🛒 2. 買い物リストのパース（絶対に項目が消えない堅牢ロジック）
+      // 🛒 2. 買い物リストのパース（見出し即時登録・ブレ防止ガード付き）
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
       const shoppingText = parts[1];
       const lines = shoppingText.split('\n');
       const parsedSections: ShoppingSection[] = [];
-      
-      // いま編集しているセクションの配列インデックスを保持する
       let currentSectionIdx = -1;
 
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
@@ -86,22 +84,22 @@ export default function BudgetBiteAI() {
         const trimmed = line.trim();
         if (!trimmed) continue;
         
-        // 見出しの判定（【 】が含まれていたら無条件で新しいセクションを作る）
+        // 見出し（【 】）を見つけたら、中身が空でも即座にセクションとして追加
         const isHeader = trimmed.includes('【') && trimmed.includes('】');
         
         if (isHeader) {
           const cleanTitle = trimmed.replace(/###|##|#|\*\*|・|\-|【|】/g, '').trim();
-          // 💡 ここが最大の変更点：中身が空の段階で、即座に配列に追加する！これで項目が消えるのを絶対防ぐ
           parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
-          currentSectionIdx = parsedSections.length - 1; // いま追加した末尾のインデックスを指す
+          currentSectionIdx = parsedSections.length - 1;
         } else if (currentSectionIdx >= 0) {
-          // 先頭が箇条書き記号（-, ・, *, 数字など）で始まっている行だけを具材として登録
+          // 先頭が箇条書き記号（-, ・, *, 数字など）で始まっている行を具材として登録
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
-            if (itemNameClean.length > 0 && itemNameClean.length < 40) {
-              // 現在アクティブなセクションのitemsに直接プッシュする
+            
+            // 💡 文字数が20文字以上の長文は、AIのメッセージや解説とみなしてリストに入れないガード機能
+            if (itemNameClean.length > 0 && itemNameClean.length < 20) {
               parsedSections[currentSectionIdx].items.push({ 
                 id: `item-${currentSectionIdx}-${lineIdx}`, 
                 name: itemNameClean, 
@@ -112,7 +110,6 @@ export default function BudgetBiteAI() {
         }
       }
       
-      // 💡 中身が完全に空っぽのセクションがあっても、項目（見出し）だけは残すためにそのままStateに入れる
       setShoppingSections(parsedSections);
       
     } catch (e) { console.error(e); }
@@ -166,7 +163,9 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      const prompt = `あなたは優秀な節約料理 of プロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+      // 💡 プロンプトの見出し指定をシンプルな「### 【調味料】」に完全統一！
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、1週間の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
+フォーマット以外の挨拶、解説、応援メッセージなどの雑談は、出力の最初にも最後にも一切含めないでください。
 
 【条件】
 ・予算：1週間の買い出し総額3500円程度
