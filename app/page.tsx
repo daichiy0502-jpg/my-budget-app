@@ -120,13 +120,12 @@ export default function BudgetBiteAI() {
     if (aiResponse) parseShoppingList(aiResponse);
   }, [aiResponse]);
 
-  // 💡 AIが吐き出した「常備品言い訳」をプログラムで強制抹殺するフィルター
+  // 💡 「常備品」という言い訳文字が入った行を、上から下まで一切容赦なく削ぎ落とす無慈悲なフィルター
   const filterExcuseLines = (text: string): string => {
     return text.split('\n').filter(line => {
-      const lowerLine = line.toLowerCase();
-      // 「常備品として想定」「常備品とします」「常備品は含まれません」などの行をまるごと消滅させる
-      if (lowerLine.includes('常備品') && (lowerLine.includes('想定') || lowerLine.includes('含む') || lowerLine.includes('除外') || lowerLine.includes('基本'))) {
-        return false;
+      const cleanLine = line.trim();
+      if (cleanLine.includes('常備品') || cleanLine.includes('常備調味料')) {
+        return false; // 「常備品」の文字が含まれる行は1行まるごとこの世から消滅させる
       }
       return true;
     }).join('\n');
@@ -284,7 +283,7 @@ export default function BudgetBiteAI() {
     if (!error) { setAiResponse(""); setHistory([]); setStock(""); setArchivedMenu(null); fetchBudgetData(); }
   };
 
-  // 💡 通常の単日AI相談
+  // 💡 通常の単日AI相談（要望を限界までシンプル化）
   const askGemini = async () => {
     setLoading(true);
     try {
@@ -292,11 +291,7 @@ export default function BudgetBiteAI() {
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const targetDateStr = `${selectedYear}年${selectedMonth}月${selectedDay}日`;
       
-      const prompt = `あなたは節約料理のプロです。指定のフォーマットで出力してください。
-
-【🚨重要ルール：調味料や米もすべて出すこと🚨】
-1. 調理手順で使用する調味料や米は、すべて例外なく1つずつ独立した「- 項目名」として買い物リストに出しなさい。
-2. カッコ書きなどで「その他は常備品とします」といった要約は不要です。
+      const prompt = `あなたは節約料理のプロです。以下の食材状況と要望に合わせて、指定のフォーマットで出力してください。料理に使う調味料（塩、醤油、油、みりん、酒、砂糖など）や米がある場合は、すべて省略せずに買い物リストに1個ずつ箇条書きで出力してください。
 
 【目標日】${targetDateStr}
 【冷蔵庫にある余り物】${stock}
@@ -318,7 +313,7 @@ export default function BudgetBiteAI() {
       const result = await model.generateContent(prompt);
       let text = result.response.text();
       
-      // 💥 プログラムによる強制言い訳排除フィルター発動！
+      // 💥 プレビュー用・データベース保存用のテキスト両方から「常備品」行を物理的に強制抹殺
       text = filterExcuseLines(text);
 
       setAiResponse(text); 
@@ -330,12 +325,12 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 💡 週一括プランニング機能
+  // 💡 週一括プランニング機能（要望を限界までシンプル化）
   const askGeminiWeekly = async () => {
     const selectedIndexes = selectedWeekDays.map((v, i) => v ? i : -1).filter(i => i !== -1);
     if (selectedIndexes.length === 0) return alert("一括生成したい曜日を少なくとも1つ選んでね！");
 
-    setLoading(true);
+    setLoading(true)
     try {
       const currentSelectedDate = new Date(selectedYear, selectedMonth - 1, selectedDay);
       const currentDayOfWeek = currentSelectedDate.getDay(); 
@@ -357,7 +352,7 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-      const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。
+      const prompt = `あなたは超優秀な節約料理のプロです。指定された複数の曜日分の献立計画と、それらを作るための【全ての合計買い物リスト】を一括で出力してください。料理に使うすべての調味料や米は、省略せずに買い物リストに1個ずつ箇条書きで出力してください。
 
 【計画対象日】${targetDaysLine}
 【冷蔵庫にある余り物】${stock}
@@ -379,7 +374,7 @@ export default function BudgetBiteAI() {
       const result = await model.generateContent(prompt);
       let fullText = result.response.text();
 
-      // 💥 プログラムによる強制言い訳排除フィルター発動！
+      // 💥 週一括のテキスト全体からも「常備品」行を物理的に強制抹殺
       fullText = filterExcuseLines(fullText);
 
       const shoppingPart = fullText.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
@@ -409,7 +404,7 @@ export default function BudgetBiteAI() {
       setAiResponse(fullText);
       setArchivedMenu(fullText);
       setActiveTab('menu');
-      alert("選択した曜日すべての献立計画を一括作成したよ！プログラム側で常備品の言い訳行を完全消去したよ。");
+      alert("曜日分の献立計画を一括作成したよ！余計な文字は完全に排除したよ。");
       fetchBudgetData();
 
     } catch (err: any) { alert(err.message); }
@@ -473,7 +468,7 @@ export default function BudgetBiteAI() {
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.6</span></h1>
+        <h1 className="text-4xl font-bold text-cyan-400 italic">BudgetBite <span className="text-xs bg-cyan-900 px-2 py-0.5 rounded-full">v4.7</span></h1>
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
@@ -591,7 +586,7 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 🛠️ AIプランニング入力 (通常 ＆ 週一括ハイブリッド) */}
+        {/* 🛠️ AIプランニング入力 */}
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
           <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">AI Planning Form</div>
           <input type="text" value={stock} onChange={(e)=>setStock(e.target.value)} placeholder="在庫リスト（冷蔵庫に入れると自動追記）" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-xs focus:outline-none"/>
