@@ -56,9 +56,9 @@ export default function BudgetBiteAI() {
   // 💌 応援メッセージを格納するステート
   const [supportMessage, setSupportMessage] = useState<string>("");
 
-  // Geminiの初期化（2.5モデルを固定）
+  // 🌟【最重要修正】モデル名を正しい「gemini-2.5-flash」に変更
   const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   // 起動時にSupabaseからデータを読み込み
   useEffect(() => {
@@ -190,8 +190,7 @@ export default function BudgetBiteAI() {
       setSupportMessage(extractedMsg.join('\n').trim());
 
     } catch (parseError) {
-      // 💡 万が一パース内で想定外の記号等でクラッシュしても、絶対に画面を巻き添えにしない
-      console.error("パースエラーが発生しました。フォールバックします:", parseError);
+      console.error("パースエラーが発生しました:", parseError);
     }
   }, [aiResponse]);
 
@@ -431,7 +430,7 @@ export default function BudgetBiteAI() {
             <div className="text-gray-300 text-sm leading-relaxed max-h-[420px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
                 <div className="space-y-4">
-                  {/* 曜日切り替え子タブ (月〜日のボタン) */}
+                  {/* 曜日切り替え子タブ */}
                   {menuDays.length > 0 ? (
                     <>
                       <div className="flex justify-between gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
@@ -457,11 +456,10 @@ export default function BudgetBiteAI() {
                       </div>
                     </>
                   ) : (
-                    // 曜日分解が上手くいかなかった場合は、エラーにせず生テキストをそのまま全出しする（安全対策）
                     <div className="whitespace-pre-wrap">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
 
-                  {/* 💌 応援メッセージを常に一番下に表示 */}
+                  {/* 💌 応援メッセージ */}
                   {supportMessage && (
                     <div className="mt-6 border-t border-dashed border-zinc-800 pt-4 text-cyan-400 font-medium whitespace-pre-wrap text-xs">
                       {supportMessage}
@@ -496,7 +494,6 @@ export default function BudgetBiteAI() {
                       </div>
                     ))
                   ) : (
-                    // 買い物リストのパースが漏れた場合も、生テキストを安全に出す
                     <div className="whitespace-pre-wrap text-xs">
                       {aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "買い物リストの読み込みに失敗しました。"}
                     </div>
