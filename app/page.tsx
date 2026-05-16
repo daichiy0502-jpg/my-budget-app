@@ -86,11 +86,9 @@ export default function BudgetBiteAI() {
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
       
-      // だいちゃんへのメッセージ部分を後ろから最優先で切り出す
       const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
-        // 残りのテキストからメッセージ部分を削除して、パースの誤検知を防ぐ
         cleanedResponse = aiResponse.replace(msgMatch[0], "");
       }
 
@@ -146,7 +144,7 @@ export default function BudgetBiteAI() {
       }
 
       // ------------------------------------------
-      // 🛒 3. 買い物リストのパース（調味料完全対応版）
+      // 🛒 3. 買い物リストのパース（シンプル＆強力版）
       // ------------------------------------------
       const parts = cleanedResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) {
@@ -159,48 +157,43 @@ export default function BudgetBiteAI() {
       const lines = shoppingText.split('\n');
       
       const parsedSections: ShoppingSection[] = [];
-      let lastSectionIndex = -1;
+      let currentSection: ShoppingSection | null = null;
 
       lines.forEach((line, lineIdx) => {
         const trimmed = line.trim();
         if (!trimmed) return;
 
-        // セクション見出しの判定
-        const isHeader = 
-          trimmed.startsWith('###') || 
-          trimmed.startsWith('##') || 
-          (trimmed.startsWith('**') && (trimmed.includes('【') || trimmed.includes('類') || trimmed.includes('リスト') || trimmed.includes('調味料') || trimmed.includes('常備')));
+        // 見出し（### や **【セクション】**）の判定
+        const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【'));
 
         if (isHeader) {
-          const sectionTitle = trimmed.replace(/###|##|\*\*|【|】/g, '').trim();
-          parsedSections.push({ title: `【${sectionTitle}】`, items: [] });
-          lastSectionIndex = parsedSections.length - 1;
-        } else if (trimmed.startsWith('*') || trimmed.startsWith('-')) {
-          const itemText = trimmed.replace(/^[\*\-\s]+/, '').replace(/\*\*/g, '').trim();
-          if (lastSectionIndex >= 0 && itemText.length > 0) {
-            parsedSections[lastSectionIndex].items.push({
-              id: `item-${lastSectionIndex}-${lineIdx}`,
-              name: itemText,
+          // もし前のセクションがあれば保存
+          if (currentSection && currentSection.items.length > 0) {
+            parsedSections.push(currentSection);
+          }
+          const cleanTitle = trimmed.replace(/###|##|#|\*\*|【|】/g, '').trim();
+          currentSection = { title: `【${cleanTitle}】`, items: [] };
+        } else if (currentSection) {
+          // 箇条書き記号（-, *, ・）を綺麗に剥ぎ取る
+          let itemNameClean = trimmed.replace(/^[\s\-\*・]+/, '').replace(/\*\*/g, '').trim();
+          
+          // 短いテキスト、または「：」などを含んだ明確なアイテム行だけを拾う（長文メッセージの混入ガード）
+          if (itemNameClean.length > 0 && itemNameClean.length < 40) {
+            currentSection.items.push({
+              id: `item-${parsedSections.length}-${lineIdx}`,
+              name: itemNameClean,
               checked: false
             });
-          }
-        } else {
-          // 「-」マークが付いていなくても、見出しの下にある短い調味料などの行を救出
-          if (lastSectionIndex >= 0 && trimmed.length > 0 && trimmed.length < 30) {
-            // 注意書きやメッセージの残骸っぽいものは除外
-            if (!trimmed.startsWith('※') && !trimmed.startsWith('両親') && !trimmed.startsWith('この') && !trimmed.startsWith('だいちゃん')) {
-              parsedSections[lastSectionIndex].items.push({
-                id: `item-${lastSectionIndex}-${lineIdx}`,
-                name: trimmed.replace(/\*\*/g, '').trim(),
-                checked: false
-              });
-            }
           }
         }
       });
 
-      // 空のセクションを綺麗に除外してセット
-      setShoppingSections(parsedSections.filter(sec => sec.items.length > 0));
+      // 最後のセクションを回収
+      if (currentSection && (currentSection as ShoppingSection).items.length > 0) {
+        parsedSections.push(currentSection);
+      }
+
+      setShoppingSections(parsedSections);
       setSupportMessage(extractedMsg);
 
     } catch (parseError) {
@@ -398,7 +391,6 @@ export default function BudgetBiteAI() {
     setShoppingSections(updated);
   };
 
-  // 🪄 テキストを綺麗にするヘルパー関数
   const formatMenuContent = (rawText: string) => {
     const lines = rawText.split('\n').filter(l => !l.trim().startsWith('###'));
     return lines.map((line, idx) => {
@@ -483,7 +475,7 @@ export default function BudgetBiteAI() {
           </button>
         </div>
 
-        {/* 📋 履歴（編集・削除機能付き） */}
+        {/* 📋 履歴 */}
         {history.length > 0 && (
           <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800">
             <p className="text-[10px] text-gray-500 px-2 mb-2 uppercase tracking-widest font-bold">Recent History</p>
@@ -552,7 +544,6 @@ export default function BudgetBiteAI() {
             <div className="text-gray-300 text-sm leading-relaxed max-h-[460px] overflow-y-auto pr-1 font-light">
               {activeTab === 'menu' ? (
                 <div className="space-y-4">
-                  {/* 曜日切り替え子タブ */}
                   {menuDays.length > 0 ? (
                     <>
                       <div className="flex justify-between gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
@@ -570,7 +561,6 @@ export default function BudgetBiteAI() {
                         ))}
                       </div>
                       
-                      {/* 🪄 綺麗にパースされた本日のレシピ表示 */}
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">
                         {formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}
                       </div>
@@ -581,7 +571,6 @@ export default function BudgetBiteAI() {
                     </div>
                   )}
 
-                  {/* 💌 応援メッセージ */}
                   {supportMessage && (
                     <div className="mt-6 bg-gradient-to-b from-zinc-950 to-zinc-900 border border-dashed border-cyan-900/60 p-4 rounded-2xl text-cyan-300 font-medium whitespace-pre-wrap text-xs leading-relaxed shadow-inner">
                       💡 {supportMessage.replace(/^だいちゃんへ[：:\n]*/i, 'だいちゃんへ：\n')}
