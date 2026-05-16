@@ -12,6 +12,9 @@ interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; }
 
+// だいちゃんが作ってくれた3タブの型
+type ActiveTabType = 'menu' | 'shopping' | 'support';
+
 export default function BudgetBiteAI() {
   const [budget, setBudget] = useState(25000);
   const [itemName, setItemName] = useState("");
@@ -21,7 +24,7 @@ export default function BudgetBiteAI() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [aiResponse, setAiResponse] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'menu' | 'shopping'>('menu');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('menu');
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
   const [activeDay, setActiveDay] = useState<string>("");
@@ -39,11 +42,11 @@ export default function BudgetBiteAI() {
       let cleanedResponse = aiResponse;
       let extractedMsg = "";
 
-      // 💌 1. パースを始める前に、応援メッセージ部分を後ろから根こそぎカットして隔離
-      const msgMatch = aiResponse.match(/(だいちゃんへ[^\n]*[\s\S]*|【応援メッセージ】[\s\S]*|応援メッセージ:?[\s\S]*)$/i);
+      // 💌 1. 応援メッセージ部分をさらに厳格にマッチングさせて根こそぎカット
+      // 改行が含まれていても、テキストの末尾に登場するメッセージを綺麗に丸ごと捕まえます
+      const msgMatch = aiResponse.match(/([\n\s]*だいちゃんへ[\s\S]*|[\n\s]*【応援メッセージ】[\s\S]*|[\n\s]*応援メッセージ:?[\s\S]*)$/i);
       if (msgMatch) {
         extractedMsg = msgMatch[0].trim();
-        // 元のテキストからメッセージ部分を完全に消し去ることでリストへの混入を防ぎます
         cleanedResponse = aiResponse.replace(msgMatch[0], "").trim();
       }
 
@@ -93,15 +96,17 @@ export default function BudgetBiteAI() {
         const trimmed = lines[lineIdx].trim();
         if (!trimmed) continue;
         
-        const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【'));
+        const isHeader = trimmed.startsWith('#') || (trimmed.startsWith('**') && trimmed.includes('【')) || trimmed.startsWith('【');
         if (isHeader) {
           if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
           const cleanTitle = trimmed.replace(/###|##|#|\*\*|【|】/g, '').trim();
           currentSection = { title: `【${cleanTitle}】`, items: [] };
         } else if (currentSection) {
           let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
-          // 空っぽのチェックボックスやゴミ、応援メッセージの残骸（だいちゃんへ等）が絶対に混入しないようにガード
-          if (itemNameClean.length > 0 && itemNameClean.length < 40 && !itemNameClean.startsWith('だいちゃん')) {
+          
+          // 強力ガード：空文字、長すぎる文字、および「だいちゃん」や「応援」から始まる行はリストに追加しない
+          if (itemNameClean.length > 0 && itemNameClean.length < 40 && 
+              !itemNameClean.startsWith('だいちゃん') && !itemNameClean.startsWith('応援')) {
             currentSection.items.push({ id: `item-${parsedSections.length}-${lineIdx}`, name: itemNameClean, checked: false });
           }
         }
@@ -109,7 +114,6 @@ export default function BudgetBiteAI() {
       if (currentSection && currentSection.items.length > 0) parsedSections.push(currentSection);
       setShoppingSections(parsedSections);
       
-      // 💌 4. 抽出しておいた応援メッセージを画面用のステートにセット
       setSupportMessage(extractedMsg);
     } catch (e) { console.error(e); }
   }, [aiResponse]);
@@ -176,7 +180,7 @@ export default function BudgetBiteAI() {
     return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\*/g, '')}</div>;
+        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\ Third party code formatting options... */, '').replace(/\*\*/g, '')}</div>;
       }
       if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
         return <div key={idx} className="text-xs text-gray-300 pl-4 py-0.5 bg-zinc-900/40 rounded my-0.5">{trimmed.replace(/^[\s・\-\d\.]+\s*/, '👉 ')}</div>;
@@ -235,12 +239,14 @@ export default function BudgetBiteAI() {
         )}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
-            <div className="flex gap-2 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-              <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-xs ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 曜日別の献立</button>
-              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-xs ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
+            <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+              <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
+              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物</button>
+              <button onClick={() => setActiveTab('support')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'support' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>✨ エール</button>
             </div>
+            
             <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
-              {activeTab === 'menu' ? (
+              {activeTab === 'menu' && (
                 <div className="space-y-4">
                   {menuDays.length > 0 ? (
                     <>
@@ -255,7 +261,9 @@ export default function BudgetBiteAI() {
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
                   )}
                 </div>
-              ) : (
+              )}
+
+              {activeTab === 'shopping' && (
                 <div className="space-y-4">
                   {shoppingSections.length > 0 ? (
                     shoppingSections.map((sec, secIdx) => (
@@ -278,19 +286,18 @@ export default function BudgetBiteAI() {
                   )}
                 </div>
               )}
-            </div>
 
-            {/* 💌 タブの外側（一番下）の空いているスペースに応援メッセージを独立表示！ */}
-            {supportMessage && (
-              <div className="mt-4 bg-gradient-to-br from-zinc-950 to-zinc-900 border border-cyan-950 rounded-2xl p-4 shadow-inner">
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <span className="text-cyan-400 text-xs font-bold">✨ AIからのエール</span>
+              {activeTab === 'support' && (
+                <div className="bg-gradient-to-br from-zinc-950 to-zinc-900 border border-cyan-950 rounded-2xl p-4 shadow-inner min-h-[150px]">
+                  <div className="flex items-center gap-1.5 mb-2.5">
+                    <span className="text-cyan-400 text-xs font-bold">✨ AIからのエール</span>
+                  </div>
+                  <p className="text-xs text-cyan-100/90 leading-relaxed whitespace-pre-wrap">
+                    {supportMessage ? supportMessage.replace(/^【応援メッセージ】|^応援メッセージ:?/i, '').trim() : "ここにAIからの応援メッセージが表示されます。次の相談を楽しみにしているよ！"}
+                  </p>
                 </div>
-                <p className="text-xs text-cyan-100/90 leading-relaxed whitespace-pre-wrap">
-                  {supportMessage.replace(/^【応援メッセージ】|^応援メッセージ:?/i, '').trim()}
-                </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
         <div className="text-center pt-8"><button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold">Reset Data</button></div>
