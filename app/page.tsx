@@ -7,7 +7,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-interface ShoppingItem { id: string; name: string; checked: boolean; }
+interface ShoppingItem { id: string; name: string; checked: boolean; inStock?: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; }
@@ -165,7 +165,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -175,7 +175,8 @@ export default function BudgetBiteAI() {
               parsedSections[currentSectionIdx].items.push({ 
                 id: `item-${currentSectionIdx}-${lineIdx}`, 
                 name: itemNameClean, 
-                checked: false 
+                checked: false,
+                inStock: false
               });
             }
           }
@@ -325,16 +326,15 @@ export default function BudgetBiteAI() {
   // カレンダーの日付をクリックした時の複数選択トグル処理
   const handleDaySelect = (dayNum: number) => {
     if (selectedDays.includes(dayNum)) {
-      // 選択解除（ただし1つも選択されていない状態にならないよう防止したい場合は最低1つ残す構成も可）
       setSelectedDays(selectedDays.filter(d => d !== dayNum));
     } else {
-      // 昇順に並ぶように追加
       setSelectedDays([...selectedDays, dayNum].sort((a, b) => a - b));
     }
   };
 
   const askGemini = async () => {
     if (selectedDays.length === 0) {
+      setLoading(false);
       return alert("カレンダーから献立を立てたい日付を1つ以上選択してね！");
     }
     if (aiRemainingCount <= 0) {
@@ -345,7 +345,6 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      // 選択された全日付の文字列をカンマ区切りで生成
       const targetDateStr = selectedDays.map(d => `${selectedYear}年${selectedMonth}月${d}日`).join(', ');
       
       const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、指定された日付分の献立と買い物リストを、指定のフォーマットで漏れなく作成してください。
@@ -587,27 +586,74 @@ export default function BudgetBiteAI() {
               )}
 
               {activeTab === 'shopping' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   {shoppingSections.length > 0 ? (
-                    shoppingSections.map((sec, secIdx) => (
-                      <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
-                        <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                        {sec.items.length > 0 ? (
+                    <>
+                      {/* 🛒 1. まだ冷蔵庫にない（買う必要がある）アイテムのセクション */}
+                      {shoppingSections.map((sec, secIdx) => {
+                        const itemsToBuy = sec.items.filter(item => !item.inStock);
+                        if (itemsToBuy.length === 0) return null;
+                        
+                        return (
+                          <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                            <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              {sec.items.map((item, itemIdx) => {
+                                if (item.inStock) return null; // 冷蔵庫にあるものはここでは非表示
+                                return (
+                                  <div key={item.id} className="flex gap-1">
+                                    {/* 通常の買い物チェックボタン */}
+                                    <button onClick={() => {
+                                      const updated = [...shoppingSections]; 
+                                      updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; 
+                                      setShoppingSections(updated);
+                                    }} className={`flex-1 border rounded-l-lg px-2.5 py-2 text-left flex items-center gap-2 truncate ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                      <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                                      <span className="truncate">{item.name}</span>
+                                    </button>
+                                    
+                                    {/* ❄️ 冷蔵庫にあるよチェックボタン */}
+                                    <button title="冷蔵庫にある" onClick={() => {
+                                      const updated = [...shoppingSections];
+                                      updated[secIdx].items[itemIdx].inStock = true;
+                                      setShoppingSections(updated);
+                                    }} className="border border-zinc-800/40 bg-zinc-950/60 hover:bg-cyan-950/40 px-2 rounded-r-lg text-xs text-cyan-600 hover:text-cyan-400 transition-all font-sans font-bold">
+                                      ❄️
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* ❄️ 2. 「冷蔵庫にあるものリスト」を一番下にまとめて表示 */}
+                      <div className="pt-4 border-t border-zinc-800/80 space-y-2">
+                        <h4 className="text-xs font-bold text-green-400 flex items-center gap-1">❄️ 冷蔵庫にあるものリスト</h4>
+                        {shoppingSections.some(sec => sec.items.some(item => item.inStock)) ? (
                           <div className="grid grid-cols-2 gap-2 text-xs">
-                            {sec.items.map((item, itemIdx) => (
-                              <button key={item.id} onClick={() => {
-                                const updated = [...shoppingSections]; updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; setShoppingSections(updated);
-                              }} className={`border rounded-lg px-2.5 py-2 text-left flex items-center gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
-                                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
-                                <span className="truncate">{item.name}</span>
-                              </button>
-                            ))}
+                            {shoppingSections.map((sec, secIdx) => 
+                              sec.items.map((item, itemIdx) => {
+                                if (!item.inStock) return null;
+                                return (
+                                  <button key={item.id} onClick={() => {
+                                    const updated = [...shoppingSections];
+                                    updated[secIdx].items[itemIdx].inStock = false; // 買い物リストに戻す
+                                    setShoppingSections(updated);
+                                  }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-center justify-between gap-1 group hover:border-cyan-800 transition-all">
+                                    <span className="truncate opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
+                                    <span className="text-[9px] text-gray-600 group-hover:text-cyan-500 font-bold font-sans">戻す</span>
+                                  </button>
+                                );
+                              })
+                            )}
                           </div>
                         ) : (
-                          <div className="text-xs text-gray-500 italic pl-2">該当する項目がありませんでした。</div>
+                          <div className="text-[10px] text-gray-600 italic pl-1">冷蔵庫にストックした食材はありません。</div>
                         )}
                       </div>
-                    ))
+                    </>
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "リストの読み込みに失敗しました。"}</div>
                   )}
