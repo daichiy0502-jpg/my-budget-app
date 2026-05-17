@@ -48,6 +48,9 @@ export default function BudgetBiteAI() {
   const [activeDay, setActiveDay] = useState<string>("");
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
 
+  // 📜 履歴エリア専用のローカルタブ状態 ('expense' = 金額記録, 'ai' = AI相談記録)
+  const [historyTab, setHistoryTab] = useState<'expense' | 'ai'>('expense');
+
   // 1. 画面起動時にすべてを復元
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
@@ -298,6 +301,7 @@ export default function BudgetBiteAI() {
       setExpense(""); 
       setItemName(""); 
       fetchBudgetData(); 
+      setHistoryTab('expense'); // 金額追加時は自動で出費タブを開く
     }
   };
 
@@ -326,7 +330,7 @@ export default function BudgetBiteAI() {
     }
 
     let emoji = "🛒";
-    if (activeCategory === "外食") emoji = "🍔"; // ✨ 外外食のタイポを修正
+    if (activeCategory === "外食") emoji = "🍔";
     if (activeCategory === "買い食い") emoji = "🏪";
     if (activeCategory === "会社の弁当") emoji = "🍱";
 
@@ -485,6 +489,7 @@ export default function BudgetBiteAI() {
       
       await supabase.from('budgets').insert([{ budget_amount: budget, item_name: `AI相談 (${targetDateStr})`, expense_price: 0, stock_items: stock, user_request: userRequest, ai_response: text }]);
       fetchBudgetData();
+      setHistoryTab('ai'); // AI相談完了時は自動でAIタブを開く
     } catch (err: any) { updateAiResponse(`APIエラー: ${err.message || err}`); }
     setLoading(false);
   };
@@ -531,7 +536,7 @@ export default function BudgetBiteAI() {
           <span>{d}</span>
           {matchedHistoryItem && (
             <div 
-              title="過去のレシピを読み込む" // ✨ タイポ Bertram を title に修正
+              title="過去のレシピを読み込む" 
               onClick={(e) => {
                 e.stopPropagation(); 
                 if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse, d);
@@ -571,6 +576,10 @@ export default function BudgetBiteAI() {
 
   const currentActiveDayData = menuDays.find(d => d.day === activeDay);
   const currentPrepText = currentActiveDayData ? currentActiveDayData.prep : "※特に不要です";
+
+  // 📜 履歴データを「金額(出費)」と「AI相談」にフィルタリング
+  const expenseHistory = history.filter(item => !item.name.includes("AI相談"));
+  const aiHistory = history.filter(item => item.name.includes("AI相談"));
 
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
@@ -769,7 +778,6 @@ export default function BudgetBiteAI() {
                 {aiResponse ? (
                   menuDays.length > 0 ? (
                     <>
-                      {/* 横並びの日付選択ボタンエリア（等幅バグ修正版） */}
                       <div className="grid grid-cols-5 gap-1.5 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800/60">
                         {menuDays.map((md) => {
                           if (!md.displayDay) return null;
@@ -791,7 +799,6 @@ export default function BudgetBiteAI() {
                         })}
                       </div>
 
-                      {/* 下準備の内容表示エリア */}
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
                           <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
@@ -869,32 +876,71 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 📜 最近の出費履歴・個別削除リストエリア */}
+        {/* 📜 履歴エリア（✨ 金額と相談を切り替えるタブ式に変更） */}
         <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-3xl space-y-3">
-          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">最近の支出・相談記録（個別削除OK）</p>
+          <div className="flex justify-between items-center border-b border-zinc-800/60 pb-2">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">履歴・記録の確認</p>
+            {/* 💾 内部切り替えスイッチ */}
+            <div className="flex bg-black p-0.5 rounded-lg border border-zinc-800">
+              <button type="button" onClick={() => setHistoryTab('expense')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${historyTab === 'expense' ? 'bg-zinc-800 text-cyan-400' : 'text-gray-600'}`}>
+                💰 出費 ({expenseHistory.length})
+              </button>
+              <button type="button" onClick={() => setHistoryTab('ai')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${historyTab === 'ai' ? 'bg-zinc-800 text-cyan-400' : 'text-gray-600'}`}>
+                🤖 AI相談 ({aiHistory.length})
+              </button>
+            </div>
+          </div>
+
           <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1 font-sans">
-            {history.length > 0 ? (
-              history.map((item) => (
-                <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 px-3 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
-                  <div className="flex flex-col min-w-0 flex-1 pr-2">
-                    <span className="text-gray-300 font-bold truncate">{item.name}</span>
-                    <span className="text-[9px] text-gray-600 font-mono mt-0.5">{item.date}</span>
+            {historyTab === 'expense' ? (
+              /* 💰 金額記録タブのコンテンツ */
+              expenseHistory.length > 0 ? (
+                expenseHistory.map((item) => (
+                  <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 pl-3 pr-2 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
+                    <div className="flex flex-col min-w-0 flex-1 pr-2">
+                      <span className="text-gray-300 font-bold truncate">{item.name}</span>
+                      <span className="text-[9px] text-gray-600 font-mono mt-0.5">{item.date}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono font-bold text-gray-200">¥{item.price.toLocaleString()}</span>
+                      <button 
+                        type="button" 
+                        onClick={() => deleteSingleExpense(item.id, item.name)} 
+                        className="text-gray-500 hover:text-red-400 text-sm p-1 font-bold transition-all"
+                        title="このレコードを削除"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {item.price > 0 && <span className="font-mono font-bold text-gray-200">¥{item.price.toLocaleString()}</span>}
-                    <button 
-                      type="button" 
-                      onClick={() => deleteSingleExpense(item.id, item.name)} 
-                      className="text-gray-600 hover:text-red-400 text-xs px-1 font-bold transition-all"
-                      title="このレコードを削除"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              ))
+                ))
+              ) : (
+                <div className="text-center py-4 text-[10px] text-gray-600 italic">まだ出費の記録はありません。</div>
+              )
             ) : (
-              <div className="text-center py-4 text-[10px] text-gray-600 italic">まだ記録された履歴はありません。</div>
+              /* 🤖 AI相談記録タブのコンテンツ */
+              aiHistory.length > 0 ? (
+                aiHistory.map((item) => (
+                  <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 pl-3 pr-2 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
+                    <div className="flex flex-col min-w-0 flex-1 pr-2">
+                      <span className="text-gray-300 font-bold truncate">{item.name}</span>
+                      <span className="text-[9px] text-gray-600 font-mono mt-0.5">{item.date}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button 
+                        type="button" 
+                        onClick={() => deleteSingleExpense(item.id, item.name)} 
+                        className="text-gray-500 hover:text-red-400 text-sm p-1 font-bold transition-all"
+                        title="このレコードを削除"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-4 text-[10px] text-gray-600 italic">まだAI相談の記録はありません。</div>
+              )
             )}
           </div>
         </div>
