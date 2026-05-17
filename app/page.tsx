@@ -33,7 +33,7 @@ export default function BudgetBiteAI() {
   
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [selectedDays, setSelectedDays] = useState<number[]>([new Date().getDate()]);
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
 
   const [statsPeriod, setStatsPeriod] = useState<'all' | 'year' | 'month'>('month');
   const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
@@ -46,10 +46,9 @@ export default function BudgetBiteAI() {
   const [shoppingSections, setShoppingSections] = useState<ShoppingSection[]>([]);
   const [menuDays, setMenuDays] = useState<MenuDay[]>([]);
   const [activeDay, setActiveDay] = useState<string>("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingPrice, setEditingPrice] = useState<string>("");
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
 
+  // 初期ロード時：予算、お気に入り、そして「今週の平日（月～金）」を自動選択
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
@@ -67,6 +66,27 @@ export default function BudgetBiteAI() {
       setFavoriteShops(defaultShops);
       localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(defaultShops));
     }
+
+    // 📅 今週の平日（月曜日～金曜日）の日付を自動計算してデフォルトにする
+    const today = new Date();
+    const currentDay = today.getDay(); 
+    const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay; 
+    
+    const weekdayNumbers: number[] = [];
+    for (let i = 0; i < 5; i++) { 
+      const d = new Date(today);
+      d.setDate(today.getDate() + mondayOffset + i);
+      if (d.getFullYear() === selectedYear && (d.getMonth() + 1) === selectedMonth) {
+        weekdayNumbers.push(d.getDate());
+      }
+    }
+    
+    if (weekdayNumbers.length > 0) {
+      setSelectedDays(weekdayNumbers.sort((a, b) => a - b));
+    } else {
+      setSelectedDays([today.getDate()]);
+    }
+
     fetchBudgetData();
   }, []);
 
@@ -92,34 +112,30 @@ export default function BudgetBiteAI() {
     }
   }, [selectedYear, selectedMonth, selectedDays, history]);
 
-  // 🛠️ 鉄壁仕様に強化されたAIレスポンスのパース処理
+  // パース処理
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
     }
     try {
-      // 1. 買い物リストより前の「献立ブロック」を抽出
       const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
-      
-      // 日付見出し「### 2026年...」で分割
       const dayBlocks = menuPart.split(/###\s*/);
       const parsedDays: MenuDay[] = [];
 
       dayBlocks.forEach(block => {
         const lines = block.split('\n');
         let headerLine = lines[0].trim();
-        if (!headerLine) return; // 空ブロックはスキップ
+        if (!headerLine) return; 
 
-        // もし日付見出しの後ろに「下準備」のゴミが混ざっていたら強制除去
-        if (headerLine.includes('下準備')) {
-          headerLine = headerLine.split(/#|\s|⏳/)[0].trim();
-        }
+        if (headerLine.includes('下準備')) return;
 
-        // ボタン表示用に「〇日」という綺麗な文字列を作る(例: 2026年5月18日(月) -> 18日)
         let displayDay = headerLine;
         const dateMatch = headerLine.match(/(\d+)日/);
         if (dateMatch) {
           displayDay = `${dateMatch[1]}日`;
+        } else {
+          // 「〇日」が入っていない見出しはボタンにしたくないので識別子を空にする
+          displayDay = "";
         }
 
         let contentLines: string[] = [];
@@ -130,14 +146,12 @@ export default function BudgetBiteAI() {
           const line = lines[i];
           const trimmed = line.trim();
           
-          // 下準備セクションの開始判定（シャープの数や末尾の「日」の有無に柔軟に対応）
           if (/^#+\s*⏳?\s*この日の夜にやる.*下準備/.test(trimmed)) {
             isPrepSection = true;
             continue; 
           }
 
           if (isPrepSection) {
-            // 下準備テキストの収集
             if (trimmed && !trimmed.startsWith('#')) {
               prepLines.push(line);
             }
@@ -148,18 +162,21 @@ export default function BudgetBiteAI() {
 
         parsedDays.push({
           day: headerLine,
-          displayDay: displayDay,
+          displayDay: displayDay.trim(),
           content: contentLines.join('\n').trim(),
           prep: prepLines.join('\n').trim() || "※特に不要です"
         });
       });
 
       setMenuDays(parsedDays);
+      
       if (parsedDays.length > 0) {
-        setActiveDay(parsedDays[0].day); 
+        // 有効な日付を持つ最初の要素を探してアクティブにする
+        const firstValid = parsedDays.find(d => d.displayDay !== "");
+        if (firstValid) setActiveDay(firstValid.day);
       }
 
-      // 2. 🛒 買い物リストのパース
+      // 🛒 買い物リストのパース
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
@@ -313,18 +330,6 @@ export default function BudgetBiteAI() {
     setExpense(shop.defaultPrice);
   };
 
-  const updateExpensePrice = async (id: string) => {
-    const newPrice = parseInt(editingPrice); if (isNaN(newPrice) || newPrice < 0) return alert("正しい金額をいれてね");
-    const { error } = await supabase.from('budgets').update({ expense_price: newPrice }).eq('id', id);
-    if (!error) { setEditingId(null); setEditingPrice(""); fetchBudgetData(); }
-  };
-
-  const deleteExpense = async (id: string) => {
-    if (!confirm("削除する？")) return;
-    const { error } = await supabase.from('budgets').delete().eq('id', id);
-    if (!error) fetchBudgetData();
-  };
-
   const saveBaseBudget = () => {
     const parsed = parseInt(inputBaseBudget);
     if (isNaN(parsed) || parsed < 0) return alert("正しい予算額を入力してね！");
@@ -380,8 +385,8 @@ export default function BudgetBiteAI() {
       });
       const targetDateStr = selectedDays.map(d => `${selectedYear}年${selectedMonth}月${d}日`).join(', ');
       
-      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、【指定された日付分だけ】の献立、買い物リスト、そして【日ごとの翌日に向けた下準備】を指定のフォーマットで漏れなく作成してください。
-選択された日数が1日だけなら1日分、3日なら3日分のみを出力し、指定されていない日付の献立は【絶対に】含めないでください。
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、【指定された日付分だけ】の献立、買い物リスト、速度重視の翌日に向けた下準備を指定のフォーマットで漏れなく作成してください。
+選択された日数が1日だけなら1日分、5日なら5日分のみを出力し、指定されていない日付の献立は【絶対に】含めないでください。
 出力の最初から最後まで、フォーマット以外の挨拶、解説、応援メッセージなどの雑談は【絶対に】一切含めないでください。
 
 【条件】
@@ -393,7 +398,7 @@ export default function BudgetBiteAI() {
 
 【出力フォーマット】
 ※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇条書きで書いてください。
-※複数日選択されている場合は、各日付ごとにこのセットを繰り返してください。1日のみ選ばれている場合や、翌日の調理が特になく下準備が不要な場合は「※特に不要です」と書いてください。
+※複数日選択されている場合は、各日付ごとにこのセットを繰り返してください。翌日の調理が特になく下準備が不要な場合は「※特に不要です」と書いてください。
 
 ### ${targetDatesDetailed[0]}
 **メニュー名**
@@ -425,7 +430,6 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 🍳 献立の成形出力
   const formatMenuContent = (rawText: string) => {
     return rawText.split('\n').map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
@@ -571,7 +575,7 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 📅 カレンダー（日付指定で自動復元） */}
+        {/* 📅 カレンダー */}
         {renderMonthCalendar()}
 
         {/* 🤖 AIプランニング入力フォーム */}
@@ -605,10 +609,14 @@ export default function BudgetBiteAI() {
                 {aiResponse ? (
                   menuDays.length > 0 ? (
                     <>
+                      {/* 🛠️ 表示名が空のゴミ要素は最初から描画させない */}
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
-                        {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.displayDay}</button>
-                        ))}
+                        {menuDays.map((md) => {
+                          if (!md.displayDay) return null;
+                          return (
+                            <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-300'}`}>{md.displayDay}</button>
+                          );
+                        })}
                       </div>
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">
                         {formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}
@@ -698,16 +706,20 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
-            {/* 3. ⏳ 下準備タブ（パース修正＆完全クリーン連動版） */}
+            {/* 3. ⏳ 下準備タブ */}
             {activeTab === 'prep' && (
               <div className="space-y-4">
                 {aiResponse ? (
                   menuDays.length > 0 ? (
                     <>
+                      {/* 🛠️ こちらも表示名がないゴミ要素は描画段階で完全に弾く */}
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
-                        {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.displayDay}</button>
-                        ))}
+                        {menuDays.map((md) => {
+                          if (!md.displayDay) return null;
+                          return (
+                            <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 transition-all ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500 hover:text-gray-300'}`}>{md.displayDay}</button>
+                          );
+                        })}
                       </div>
 
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
@@ -715,11 +727,12 @@ export default function BudgetBiteAI() {
                           <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
                           {currentActiveDayData && (
                             <span className="text-[10px] bg-amber-950/80 border border-amber-800/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
-                              {currentActiveDayData.displayDay}(当日の夜)
+                              ({currentActiveDayData.displayDay}の夜に仕込む)
                             </span>
                           )}
                         </div>
 
+                        {/* 🛠️ 選択された日の下準備をそのままテキストとして表示 */}
                         <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed space-y-1">
                           {currentPrepText.split('\n').map((line, idx) => {
                             const trimmed = line.trim();
