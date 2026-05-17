@@ -10,13 +10,14 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 interface ShoppingItem { id: string; name: string; checked: boolean; inStock?: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; }
-interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; }
+interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; year: number; month: number; rawDateObj: Date; }
 
 type ActiveTabType = 'menu' | 'shopping' | 'stats';
 type CategoryType = '自炊' | '外食' | '買い食い' | '会社の弁当' | 'その他';
 interface FavoriteShop { id: string; label: string; itemName: string; category: CategoryType; defaultPrice: string; }
 
-const DAY_MAP_ENG_TO_JA: Record<number, string> = { 0: '日', 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土' };
+// 📅 月曜始まり用の曜日マップ
+const DAY_MAP_ENG_TO_JA: Record<number, string> = { 1: '月', 2: '火', 3: '水', 4: '木', 5: '金', 6: '土', 0: '日' };
 
 export default function BudgetBiteAI() {
   // 💰 予算・ステータス
@@ -39,6 +40,9 @@ export default function BudgetBiteAI() {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedDays, setSelectedDays] = useState<number[]>([new Date().getDate()]);
+
+  // 📊 分析データの集計範囲指定 ('all' = 全期間, 'year' = 選択年のみ, 'month' = 選択月のみ)
+  const [statsPeriod, setStatsPeriod] = useState<'all' | 'year' | 'month'>('month');
 
   // 🤖 AI・表示データ
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -135,7 +139,16 @@ export default function BudgetBiteAI() {
         parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
       }
       setMenuDays(parsedDays);
-      if (parsedDays.length > 0) setActiveDay(parsedDays[0].day); 
+      
+      // 🌟 アプリ起動時 or 復元時に今日の曜日に合わせて表示をフォーカスする
+      const dayOfWeekEng = new Date().getDay();
+      const dayOfWeekJa = dayOfWeekEng === 0 ? '日' : dayOfWeekEng === 1 ? '月' : dayOfWeekEng === 2 ? '火' : dayOfWeekEng === 3 ? '水' : dayOfWeekEng === 4 ? '木' : dayOfWeekEng === 5 ? '金' : '土';
+      const matchToday = parsedDays.find(d => d.day === dayOfWeekJa);
+      if (matchToday) {
+        setActiveDay(matchToday.day);
+      } else if (parsedDays.length > 0) {
+        setActiveDay(parsedDays[0].day); 
+      }
 
       // 🛒 2. 買い物リストのパース
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
@@ -165,7 +178,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -195,14 +208,22 @@ export default function BudgetBiteAI() {
         const activeBase = currentSavedBase ? parseInt(currentSavedBase) : baseBudget;
         setBudget(activeBase - totalExpense);
 
-        setHistory(data.map((item): HistoryItem => ({
-          id: item.id, 
-          name: item.item_name || "買い物", 
-          price: item.expense_price || 0,
-          rawAiResponse: item.ai_response || undefined,
-          date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
-                new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-        })));
+        const parsedHistory = data.map((item): HistoryItem => {
+          const dObj = new Date(item.created_at);
+          return {
+            id: item.id, 
+            name: item.item_name || "買い物", 
+            price: item.expense_price || 0,
+            rawAiResponse: item.ai_response || undefined,
+            year: dObj.getFullYear(),
+            month: dObj.getMonth() + 1,
+            rawDateObj: dObj,
+            date: dObj.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
+                  dObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          };
+        });
+
+        setHistory(parsedHistory);
 
         const todayStr = new Date().toLocaleDateString('ja-JP'); 
         const todayAiCount = data.filter(item => {
@@ -213,11 +234,32 @@ export default function BudgetBiteAI() {
         
         setAiRemainingCount(Math.max(0, 20 - todayAiCount));
         
-        const lastAi = data.find(item => item.ai_response);
-        if (lastAi && !aiResponse) { 
-          setAiResponse(lastAi.ai_response); 
-          setStock(lastAi.stock_items || ""); 
-          setUserRequest(lastAi.user_request || userRequest); 
+        // ✨ [自動表示アップデート] 起動時に「今日」が含まれるAI献立があるか履歴から最優先で探す
+        const now = new Date();
+        const tYear = now.getFullYear();
+        const tMonth = now.getMonth() + 1;
+        const tDay = now.getDate();
+        const targetTodayString = `${tYear}年${tMonth}月${tDay}日`;
+
+        const todayAiLog = parsedHistory.find(item => item.name.startsWith('AI相談') && item.name.includes(targetTodayString) && item.rawAiResponse);
+        
+        if (todayAiLog && todayAiLog.rawAiResponse) {
+          // 今日の献立履歴が見つかればそれを最優先で画面に表示
+          setAiResponse(todayAiLog.rawAiResponse);
+          setActiveTab('menu');
+          const matchingBudgetLog = data.find(item => item.id === todayAiLog.id);
+          if (matchingBudgetLog) {
+            setStock(matchingBudgetLog.stock_items || "");
+            setUserRequest(matchingBudgetLog.user_request || userRequest);
+          }
+        } else {
+          // 今日用の献立が見つからない場合は、従来通り直近のAIログを表示
+          const lastAi = data.find(item => item.ai_response);
+          if (lastAi && !aiResponse) { 
+            setAiResponse(lastAi.ai_response); 
+            setStock(lastAi.stock_items || ""); 
+            setUserRequest(lastAi.user_request || userRequest); 
+          }
         }
       }
     } catch (e) { console.error(e); }
@@ -309,10 +351,19 @@ export default function BudgetBiteAI() {
     setIsEditingBaseBudget(false);
   };
 
+  // 📊 年月絞り込みに対応した分析データ計算
   const getStats = () => {
     const categories: CategoryType[] = ['自炊', '外食', '買い食い', '会社の弁当', 'その他'];
+    
+    const filteredHistory = history.filter(h => {
+      if (statsPeriod === 'all') return true;
+      if (statsPeriod === 'year') return h.year === selectedYear;
+      if (statsPeriod === 'month') return h.year === selectedYear && h.month === selectedMonth;
+      return true;
+    });
+
     return categories.map(cat => {
-      const sum = history.filter(h => h.name.includes(`[${cat}]`)).reduce((a, b) => a + b.price, 0);
+      const sum = filteredHistory.filter(h => h.name.includes(`[${cat}]`)).reduce((a, b) => a + b.price, 0);
       return { category: cat, total: sum };
     });
   };
@@ -323,7 +374,6 @@ export default function BudgetBiteAI() {
     if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); setAiRemainingCount(20); }
   };
 
-  // カレンダーの日付をクリックした時の複数選択トグル処理
   const handleDaySelect = (dayNum: number) => {
     if (selectedDays.includes(dayNum)) {
       setSelectedDays(selectedDays.filter(d => d !== dayNum));
@@ -415,15 +465,23 @@ export default function BudgetBiteAI() {
 
   const renderMonthCalendar = () => {
     const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
-    const dayButtons = [];
-    
+    const firstDayIndex = new Date(selectedYear, selectedMonth - 1, 1).getDay(); 
+    const blankCellsCount = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
+
+    const gridCells = [];
+
+    for (let b = 0; b < blankCellsCount; b++) {
+      gridCells.push(<div key={`blank-${b}`} className="p-1.5 opacity-0 pointer-events-none"></div>);
+    }
+
     for (let d = 1; d <= daysInMonth; d++) {
       const dateObj = new Date(selectedYear, selectedMonth - 1, d);
-      const dayJa = DAY_MAP_ENG_TO_JA[dateObj.getDay()];
+      const currentDayEng = dateObj.getDay();
+      const dayJa = DAY_MAP_ENG_TO_JA[currentDayEng];
       const isSelected = selectedDays.includes(d);
       const hasMenu = history.some(item => item.name.includes(`AI相談`) && item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
       
-      dayButtons.push(
+      gridCells.push(
         <button key={d} type="button" onClick={() => handleDaySelect(d)} className={`flex flex-col items-center justify-center p-1.5 rounded-xl border font-mono text-xs transition-all ${isSelected ? 'bg-cyan-600 text-white border-cyan-500 font-bold' : 'bg-zinc-950 text-gray-400 border-zinc-900/50 hover:bg-zinc-900'} relative`}>
           <span className="text-[8px] opacity-60 font-sans">{dayJa}</span>
           <span>{d}</span>
@@ -432,13 +490,12 @@ export default function BudgetBiteAI() {
       );
     }
 
-    // 💡 2020年から2105年まで（だいちゃんの100歳超えプラン！）の選択肢を完全に網羅
     const dynamicYears = Array.from({ length: 86 }, (_, i) => 2020 + i);
 
     return (
       <div className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800 space-y-3">
         <div className="flex justify-between items-center px-1">
-          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calendar Target</label>
+          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calendar Target (Mon-Sun)</label>
           <div className="flex gap-2">
             <select value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="bg-black border border-zinc-800 rounded-lg text-xs px-2 py-1 text-white font-mono">
               {dynamicYears.map(y => <option key={y} value={y}>{y}年</option>)}
@@ -448,7 +505,7 @@ export default function BudgetBiteAI() {
             </select>
           </div>
         </div>
-        <div className="grid grid-cols-7 gap-1 max-h-[140px] overflow-y-auto pr-1">{dayButtons}</div>
+        <div className="grid grid-cols-7 gap-1 max-h-[160px] overflow-y-auto pr-1">{gridCells}</div>
         <div className="text-center text-[10px] font-bold text-cyan-400 bg-zinc-950 py-1 rounded-xl border border-zinc-900">
           選択日: {selectedDays.length > 0 ? selectedDays.map(d => `${d}日`).join(', ') : '未選択'}
         </div>
@@ -502,9 +559,9 @@ export default function BudgetBiteAI() {
             ))}
           </div>
           <form onSubmit={addExpense} className="flex gap-2">
-            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
-            <input type="number" value={expense} onChange={(e) => setExpense(e.target.value)} placeholder="金額" disabled={activeCategory === '会社の弁当'} className="w-24 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-lg font-mono focus:outline-none" />
-            <button className="bg-white text-black px-5 rounded-xl font-bold text-xs">記録</button>
+            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm focus:outline-none" />
+            <input type="number" value={expense} onChange={(e) => setExpense(e.target.value)} placeholder="金額" disabled={activeCategory === '会社の弁当'} className="w-20 bg-zinc-900 border border-zinc-800 rounded-xl px-2 py-3 text-white text-lg font-mono focus:outline-none text-center" />
+            <button className="bg-white text-black px-3 sm:px-5 rounded-xl font-bold text-xs whitespace-nowrap">記録</button>
           </form>
 
           {/* ⭐️ お気に入り登録・呼び出し */}
@@ -564,7 +621,7 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* 🍽️ 提案された献立・買い物リスト表示領域 */}
+        {/* 🍽️ 提案された献立・買い物リスト・集計分析表示領域 */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
             {isViewingHistory && (
@@ -671,7 +728,15 @@ export default function BudgetBiteAI() {
 
               {activeTab === 'stats' && (
                 <div className="space-y-4 p-2">
-                  <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-widest">Category Breakdown</p>
+                  <div className="flex flex-col gap-1.5 pb-2 border-b border-zinc-800">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">集計対象の期間</p>
+                    <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900 text-[10px]">
+                      <button type="button" onClick={() => setStatsPeriod('month')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'month' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>{selectedYear}年{selectedMonth}月のみ</button>
+                      <button type="button" onClick={() => setStatsPeriod('year')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'year' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>{selectedYear}年全体</button>
+                      <button type="button" onClick={() => setStatsPeriod('all')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'all' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>全期間累計</button>
+                    </div>
+                  </div>
+
                   {getStats().map(s => (
                     <div key={s.category} className="space-y-1">
                       <div className="flex justify-between text-[10px] font-bold uppercase">
