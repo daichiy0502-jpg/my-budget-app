@@ -109,7 +109,7 @@ export default function BudgetBiteAI() {
     }
   }, [selectedYear, selectedMonth, selectedDays, history]);
 
-  // ✨ 下準備のテキストを確実に抽出するパース処理
+  // ✨ 直前の日付の選択状態（activeDay）を完璧に保持するパースロジック
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
@@ -118,7 +118,6 @@ export default function BudgetBiteAI() {
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       const menuPart = parts[0];
       
-      // 「### 数字」から始まる日付ブロックで分割
       const dayBlocks = menuPart.split(/(?=###\s*(?:\d+年|\d+月|\d+日))/g);
       const parsedDays: MenuDay[] = [];
 
@@ -151,14 +150,12 @@ export default function BudgetBiteAI() {
           const trimmed = line.trim();
           if (trimmed.startsWith('###') && !trimmed.startsWith('####')) return; 
 
-          // 下準備セクションの開始を判定（シャープの数に関わらず「下準備」の文字があれば切り替え）
           if (trimmed.includes('下準備') && trimmed.startsWith('#')) {
             isPrepSection = true;
             return;
           }
 
           if (isPrepSection) {
-            // 次の日付ブロックや買い物リストに突入しない限り、下準備として回収
             if (trimmed && !trimmed.startsWith('### ')) {
               prepLines.push(line);
             }
@@ -167,7 +164,6 @@ export default function BudgetBiteAI() {
           }
         });
 
-        // もし下準備の中身が空、または「不要」という文言だけならデフォルト文字にする
         let finalPrep = prepLines.join('\n').trim();
         if (!finalPrep || finalPrep.includes('不要')) {
           finalPrep = "※特に不要です";
@@ -184,15 +180,16 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       
       if (parsedDays.length > 0) {
-        // 現在選択されている日付（activeDay）が新リストにあれば維持、なければ1件目をセット
-        const exists = parsedDays.some(d => d.day === activeDay);
-        if (!exists) {
+        // ★ 修正ポイント: 新しいリストの中に、すでに選択されていた activeDay が存在するか確認
+        const isStillValid = parsedDays.some(d => d.day === activeDay);
+        
+        // 直前まで選んでいた状態がリスト内にあるならキープ！ない場合だけ最初の1件目をセットする
+        if (!isStillValid) {
           const firstValid = parsedDays.find(d => d.displayDay !== "");
           if (firstValid) setActiveDay(firstValid.day);
         }
       }
 
-      // 🛒 買い物リストのパース
       if (parts.length < 2) { setShoppingSections([]); return; }
       const shoppingText = parts[1];
       const lines = shoppingText.split('\n');
@@ -234,7 +231,7 @@ export default function BudgetBiteAI() {
       }
       setShoppingSections(parsedSections);
     } catch (e) { console.error("Parse Error:", e); }
-  }, [aiResponse]);
+  }, [aiResponse, activeDay]); // activeDayの変更も検知の対象に含める
 
   const fetchBudgetData = async () => {
     try {
@@ -749,13 +746,12 @@ export default function BudgetBiteAI() {
                             const trimmed = line.trim();
                             if (!trimmed) return null;
                             
-                            // 先頭のマークダウン記号（- や ・ や #### など）を取り除いて綺麗に整形
                             if (trimmed.startsWith('-') || trimmed.startsWith('・')) {
                               return <div key={idx} className="pl-2 py-1 text-gray-200 bg-zinc-900/30 rounded my-0.5 border-l border-amber-600/40">👉 {trimmed.replace(/^[\-・]\s*/, '')}</div>;
                             }
-                            if (trimmed.startsWith('#')) return null; // 余計な見出し行はスキップ
+                            if (trimmed.startsWith('#')) return null; 
                             
-                            return <div key={idx} className="text-gray-300 py-1 bg-zinc-900/30 rounded my-0.5 border-l border-amber-600/40 pl-2">👉 {trimmed}</div>;
+                            return <div key={idx} className="text-gray-200 py-1 bg-zinc-900/30 rounded my-0.5 border-l border-amber-600/40 pl-2">👉 {trimmed}</div>;
                           })}
                         </div>
                       </div>
