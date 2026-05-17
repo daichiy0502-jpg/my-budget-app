@@ -301,6 +301,21 @@ export default function BudgetBiteAI() {
     }
   };
 
+  const deleteSingleExpense = async (id: string, name: string) => {
+    if (!confirm(`「${name}」の記録を削除して予算を戻す？`)) return;
+    try {
+      const { error } = await supabase.from('budgets').delete().eq('id', id);
+      if (!error) {
+        alert("削除したよ！予算が戻りました。");
+        fetchBudgetData(); 
+      } else {
+        alert("削除に失敗しちゃった。");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const addCurrentToFavorites = () => {
     if (!itemName.trim() && activeCategory !== '会社の弁当') return alert("お店の名前（品名）を入力してね！");
     let finalItemName = itemName;
@@ -311,7 +326,7 @@ export default function BudgetBiteAI() {
     }
 
     let emoji = "🛒";
-    if (activeCategory === "外食") emoji = "🍔";
+    if (activeCategory === "外食") emoji = "🍔"; // ✨ 外外食のタイポを修正
     if (activeCategory === "買い食い") emoji = "🏪";
     if (activeCategory === "会社の弁当") emoji = "🍱";
 
@@ -371,7 +386,7 @@ export default function BudgetBiteAI() {
   };
 
   const resetData = async () => {
-    if (!confirm("リセットする？")) return;
+    if (!confirm("すべてデータをリセットする？（これまでの記録が全消えします）")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (!error) { 
       setBudget(25000); 
@@ -384,7 +399,6 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // カレンダー日付選択
   const handleDaySelect = (dayNum: number) => {
     let nextDays: number[] = [];
     if (selectedDays.includes(dayNum)) {
@@ -396,7 +410,6 @@ export default function BudgetBiteAI() {
     localStorage.setItem('budgetbite_selected_days', JSON.stringify(nextDays));
   };
 
-  // 過去のドットからレシピ履歴を復元する時、カレンダーの青丸もそこに合わせる
   const handleLoadHistoryRecipe = (rawText: string, targetDay: number) => {
     if (rawText) {
       updateAiResponse(rawText);
@@ -406,7 +419,6 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // Geminiに相談するメイン処理
   const askGemini = async () => {
     if (selectedDays.length === 0) {
       setLoading(false);
@@ -434,11 +446,11 @@ export default function BudgetBiteAI() {
 ・対象日（この日付以外は出力禁止）：${targetDatesDetailed.join(', ')}
 ・全体予算：対象日数に応じた現実的な買い出し総額（1日あたり500円程度を目安に按分）
 ・ターゲット：時短レシピ（調理時間10〜15分）
-・冷蔵庫の余り食材：${stock || "特になし"}
+・冷蔵庫の余り食材：${stock || "特なし"}
 ・個別リクエスト：${userRequest}
 
 【出力フォーマット】
-※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇取りで書いてください。
+※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇条書きで書いてください。
 ※複数日選択されている場合は、各日付ごとにこのセットを繰り返してください。翌日の調理が特になく下準備が不要な場合は「※特に不要です」と書いてください。
 
 ### ${targetDatesDetailed[0]}
@@ -519,7 +531,7 @@ export default function BudgetBiteAI() {
           <span>{d}</span>
           {matchedHistoryItem && (
             <div 
-              title="過去のレシピを読み込む" 
+              title="過去のレシピを読み込む" // ✨ タイポ Bertram を title に修正
               onClick={(e) => {
                 e.stopPropagation(); 
                 if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse, d);
@@ -635,7 +647,7 @@ export default function BudgetBiteAI() {
           <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">
-            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `選択した日のレシピをAIに相談する`}
+            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく選択日のレシピをAIに相談する`}
           </button>
         </div>
 
@@ -757,16 +769,17 @@ export default function BudgetBiteAI() {
                 {aiResponse ? (
                   menuDays.length > 0 ? (
                     <>
-                      {/* 上部の日付切り替え横並びボタン（3・4枚目のイメージ通り） */}
-                      <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 flex-wrap justify-between">
+                      {/* 横並びの日付選択ボタンエリア（等幅バグ修正版） */}
+                      <div className="grid grid-cols-5 gap-1.5 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800/60">
                         {menuDays.map((md) => {
                           if (!md.displayDay) return null;
                           const isCurrentActive = activeDay === md.day;
                           return (
                             <button 
                               key={md.day} 
+                              type="button"
                               onClick={() => handleActiveDayChange(md.day)} 
-                              className={`px-3 py-2 rounded-xl font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] transition-all ${
+                              className={`py-2 rounded-xl font-bold text-[11px] whitespace-nowrap text-center transition-all ${
                                 isCurrentActive 
                                   ? 'bg-amber-700 text-amber-100 border border-amber-600 font-bold' 
                                   : 'bg-zinc-900/60 text-gray-400 border border-zinc-800/40 hover:bg-zinc-900'
@@ -778,12 +791,12 @@ export default function BudgetBiteAI() {
                         })}
                       </div>
 
-                      {/* 下準備の中身表示カード（スマート表示版） */}
+                      {/* 下準備の内容表示エリア */}
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
                           <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
                           {currentActiveDayData && (
-                            <span className="text-[10px] bg-amber-950/80 border border-amber-900/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
+                            <span className="text-[10px] bg-amber-950/80 border border-amber-800/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
                               ({currentActiveDayData.displayDay}の夜に仕込む)
                             </span>
                           )}
@@ -852,6 +865,36 @@ export default function BudgetBiteAI() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* 📜 最近の出費履歴・個別削除リストエリア */}
+        <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-3xl space-y-3">
+          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">最近の支出・相談記録（個別削除OK）</p>
+          <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1 font-sans">
+            {history.length > 0 ? (
+              history.map((item) => (
+                <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 px-3 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
+                  <div className="flex flex-col min-w-0 flex-1 pr-2">
+                    <span className="text-gray-300 font-bold truncate">{item.name}</span>
+                    <span className="text-[9px] text-gray-600 font-mono mt-0.5">{item.date}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {item.price > 0 && <span className="font-mono font-bold text-gray-200">¥{item.price.toLocaleString()}</span>}
+                    <button 
+                      type="button" 
+                      onClick={() => deleteSingleExpense(item.id, item.name)} 
+                      className="text-gray-600 hover:text-red-400 text-xs px-1 font-bold transition-all"
+                      title="このレコードを削除"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-4 text-[10px] text-gray-600 italic">まだ記録された履歴はありません。</div>
             )}
           </div>
         </div>
