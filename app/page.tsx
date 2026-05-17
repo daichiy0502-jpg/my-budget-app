@@ -48,7 +48,7 @@ export default function BudgetBiteAI() {
   const [activeDay, setActiveDay] = useState<string>("");
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
 
-  // 1. 初回読み込み時にlocalStorageから過去の状態を復元
+  // 1. 初回読み込み時にlocalStorageから過去の状態を完全に復元
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
@@ -67,7 +67,13 @@ export default function BudgetBiteAI() {
       localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(defaultShops));
     }
 
-    // リロード時に直前まで選ばれていた日付を復元
+    // ✨ 最重要：リロード時に最後に表示していたレシピ回答そのものを復元！
+    const savedAiResponse = localStorage.getItem('budgetbite_ai_response');
+    if (savedAiResponse) {
+      setAiResponse(savedAiResponse);
+    }
+
+    // リロード時に直前まで選ばれていたメニューのタブ内日付を復元
     const savedActiveDay = localStorage.getItem('budgetbite_active_day');
     if (savedActiveDay) {
       setActiveDay(savedActiveDay);
@@ -99,24 +105,19 @@ export default function BudgetBiteAI() {
     fetchBudgetData(); 
   }, [baseBudget]);
 
-  useEffect(() => {
-    if (selectedDays.length === 0) {
-      setAiResponse("");
-      return;
-    }
-    const found = history.find(item => {
-      if (!item.name.startsWith('AI相談') || !item.rawAiResponse) return false;
-      return selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
-    });
-    
-    if (found && found.rawAiResponse) {
-      setAiResponse(found.rawAiResponse);
-    } else {
-      setAiResponse("");
-    }
-  }, [selectedYear, selectedMonth, selectedDays, history]);
+  // 🚨【バグの原因だった自動上書きを全撤廃】
+  // カレンダーの日付変更でhistoryから勝手に古いレシピを引っ張ってきてaiResponseを破壊していたuseEffectを完全に削除しました。
+  // これにより、今画面にあるレシピは勝手に書き換わらなくなります。
 
-  // ✨ リロードされても絶対に日付選択状態を壊さないパースロジック
+  // ✨ aiResponseが変わったら自動的にlocalStorageへ永続保存する
+  const updateAiResponse = (text: string) => {
+    setAiResponse(text);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('budgetbite_ai_response', text);
+    }
+  };
+
+  // ✨ レシピデータのパース処理
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); return;
@@ -187,19 +188,15 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       
       if (parsedDays.length > 0) {
-        // ★ 修正超強化ポイント：StateかlocalStorageのどちらかに有効な日付があるかを厳密チェック
         const savedLocal = typeof window !== 'undefined' ? localStorage.getItem('budgetbite_active_day') : "";
         const currentTarget = activeDay || savedLocal || "";
-        
         const isStillValid = parsedDays.some(d => d.day === currentTarget);
         
         if (isStillValid) {
-          // すでに記憶がある場合は、リロード直後でも絶対にその日付を死守する！
           if (activeDay !== currentTarget) {
             setActiveDay(currentTarget);
           }
         } else {
-          // localStorageも含めて本当に「全く何も選ばれていない初回」だけ、1件目を初期セット
           const firstValid = parsedDays.find(d => d.displayDay !== "");
           if (firstValid) {
             setActiveDay(firstValid.day);
@@ -249,9 +246,8 @@ export default function BudgetBiteAI() {
       }
       setShoppingSections(parsedSections);
     } catch (e) { console.error("Parse Error:", e); }
-  }, [aiResponse, activeDay]); // activeDayの状態も一緒にしっかり監視する
+  }, [aiResponse, activeDay]);
 
-  // 日付ボタンをポチッと手動で切り替えた時の関数（localStorageに即保存！）
   const handleActiveDayChange = (dayString: string) => {
     setActiveDay(dayString);
     localStorage.setItem('budgetbite_active_day', dayString);
@@ -390,7 +386,13 @@ export default function BudgetBiteAI() {
   const resetData = async () => {
     if (!confirm("リセットする？")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); setAiRemainingCount(20); }
+    if (!error) { 
+      setBudget(25000); 
+      updateAiResponse(""); 
+      setHistory([]); 
+      setStock(""); 
+      setAiRemainingCount(20); 
+    }
   };
 
   const handleDaySelect = (dayNum: number) => {
@@ -398,6 +400,14 @@ export default function BudgetBiteAI() {
       setSelectedDays(selectedDays.filter(d => d !== dayNum));
     } else {
       setSelectedDays([...selectedDays, dayNum].sort((a, b) => a - b));
+    }
+  };
+
+  // ★ 過去の履歴をカレンダー等から直接「明示的に読み出したい」とき用の関数
+  const handleLoadHistoryRecipe = (rawText: string) => {
+    if (rawText) {
+      updateAiResponse(rawText);
+      alert("選択した日の過去レシピを画面に読み込んだよ！");
     }
   };
 
@@ -458,10 +468,13 @@ export default function BudgetBiteAI() {
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
-      setAiResponse(text); setActiveTab('menu');
+      
+      updateAiResponse(text); 
+      setActiveTab('menu');
+      
       await supabase.from('budgets').insert([{ budget_amount: budget, item_name: `AI相談 (${targetDateStr})`, expense_price: 0, stock_items: stock, user_request: userRequest, ai_response: text }]);
       fetchBudgetData();
-    } catch (err: any) { setAiResponse(`APIエラー: ${err.message || err}`); }
+    } catch (err: any) { updateAiResponse(`APIエラー: ${err.message || err}`); }
     setLoading(false);
   };
 
@@ -498,13 +511,24 @@ export default function BudgetBiteAI() {
       const currentDayEng = dateObj.getDay();
       const dayJa = DAY_MAP_ENG_TO_JA[currentDayEng];
       const isSelected = selectedDays.includes(d);
-      const hasMenu = history.some(item => item.name.includes(`AI相談`) && item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
+      
+      // 過去にこの日のAIレシピがあるか検索
+      const matchedHistoryItem = history.find(item => item.name.includes(`AI相談`) && item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
       
       gridCells.push(
         <button key={d} type="button" onClick={() => handleDaySelect(d)} className={`flex flex-col items-center justify-center p-1.5 rounded-xl border font-mono text-xs transition-all ${isSelected ? 'bg-cyan-600 text-white border-cyan-500 font-bold' : 'bg-zinc-950 text-gray-400 border-zinc-900/50 hover:bg-zinc-900'} relative`}>
           <span className="text-[8px] opacity-60 font-sans">{dayJa}</span>
           <span>{d}</span>
-          {hasMenu && <div className="absolute bottom-1 w-1 h-1 bg-cyan-400 rounded-full"></div>}
+          {matchedHistoryItem && (
+            <div 
+              title="過去のレシピを読み込む" 
+              onClick={(e) => {
+                e.stopPropagation(); // カレンダー選択の発火を防ぐ
+                if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse);
+              }}
+              className="absolute bottom-1 w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse hover:scale-150 transition-all"
+            ></div>
+          )}
         </button>
       );
     }
@@ -532,12 +556,7 @@ export default function BudgetBiteAI() {
     );
   };
 
-  const isViewingHistory = selectedDays.length > 0 && history.some(item => 
-    item.name.startsWith('AI相談') && selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`))
-  );
-
   const dynamicStatsYears = Array.from({ length: 86 }, (_, i) => 2020 + i);
-  const formattedSelectedDatesText = selectedDays.length > 0 ? selectedDays.map(d => `${selectedMonth}月${d}日`).join(', ') : `${selectedMonth}月の日付`;
   const shoppingText = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
 
   const currentActiveDayData = menuDays.find(d => d.day === activeDay);
@@ -618,18 +637,12 @@ export default function BudgetBiteAI() {
           <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">
-            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく${selectedDays.length}日分の献立をAIに相談する`}
+            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく選択日のレシピをAIに相談する`}
           </button>
         </div>
 
         {/* 🍽️ タブ表示領域 */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
-          {isViewingHistory && (
-            <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
-              📁 自動表示中: {selectedDays.map(d => `${d}日`).join(', ') || '選択日'}
-            </div>
-          )}
-
           <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
             <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
             <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物</button>
@@ -661,7 +674,7 @@ export default function BudgetBiteAI() {
                   )
                 ) : (
                   <div className="text-center py-8 text-xs text-gray-500 italic">
-                    {formattedSelectedDatesText} の献立はまだ相談されていません。<br />上のフォームから相談してね！
+                    現在表示するレシピはありません。<br />カレンダーの青丸ポチを押すか、新しく相談してね！
                   </div>
                 )}
               </div>
@@ -735,7 +748,7 @@ export default function BudgetBiteAI() {
                 ) : aiResponse ? (
                   <div className="whitespace-pre-wrap text-xs">{shoppingText || "リストの読み込みに失敗しました。"}</div>
                 ) : (
-                  <div className="text-center py-8 text-xs text-gray-500 italic">カレンダーで日付を選ぶか、新しく相談すると買い物リストが自動表示されるよ！</div>
+                  <div className="text-center py-8 text-xs text-gray-500 italic">レシピが表示されると、買い物リストが自動生成されるよ！</div>
                 )}
               </div>
             )}
@@ -785,7 +798,7 @@ export default function BudgetBiteAI() {
                   )
                 ) : (
                   <div className="text-center py-8 text-xs text-gray-500 italic">
-                    カレンダーで日付を選ぶか、新しく相談すると前夜用の下準備が自動表示されるよ！
+                    レシピが表示されると、前夜用の下準備がここに自動表示されるよ！
                   </div>
                 )}
               </div>
