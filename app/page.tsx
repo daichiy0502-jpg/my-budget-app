@@ -121,7 +121,7 @@ export default function BudgetBiteAI() {
         { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
         { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
         { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
-        { name: "木", regex: /(火曜日|【木】|■木|###\s*木)/ }, // 元のパターンのまま維持
+        { name: "木", regex: /(火曜日|【木】|■木|###\s*木)/ }, 
         { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
         { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
         { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
@@ -281,7 +281,14 @@ export default function BudgetBiteAI() {
       ai_response: aiResponse 
     }]);
     
-    if (!error) { setExpense(""); setItemName(""); fetchBudgetData(); }
+    if (!error) { 
+      setExpense(""); 
+      setItemName(""); 
+      if (activeCategory === '会社の弁当') {
+        setActiveCategory('自炊'); 
+      }
+      fetchBudgetData(); 
+    }
   };
 
   const addCurrentToFavorites = () => {
@@ -350,7 +357,6 @@ export default function BudgetBiteAI() {
     setIsEditingBaseBudget(false);
   };
 
-  // 📊 独自指定された年月リストに基づいた集計
   const getStats = () => {
     const categories: CategoryType[] = ['自炊', '外食', '買い食い', '会社の弁当', 'その他'];
     
@@ -622,25 +628,25 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* 🍽️ 提案された献立・買い物リスト・集計分析表示領域 */}
-        {aiResponse && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
-            {isViewingHistory && (
-              <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
-                📁 過去ログ復元中: {selectedDays.map(d => `${d}日`).join(', ') || '選択日'}
-              </div>
-            )}
-
-            <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-              <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
-              <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
-              <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 分析</button>
+        {/* 🍽️ タブ表示領域（常時表示するようにアップデート） */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
+          {isViewingHistory && (
+            <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
+              📁 過去ログ復元中: {selectedDays.map(d => `${d}日`).join(', ') || '選択日'}
             </div>
-            
-            <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
-              {activeTab === 'menu' && (
-                <div className="space-y-4">
-                  {menuDays.length > 0 ? (
+          )}
+
+          <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+            <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
+            <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
+            <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 分析</button>
+          </div>
+          
+          <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
+            {activeTab === 'menu' && (
+              <div className="space-y-4">
+                {aiResponse ? (
+                  menuDays.length > 0 ? (
                     <>
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
@@ -651,127 +657,129 @@ export default function BudgetBiteAI() {
                     </>
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
-                  )}
-                </div>
-              )}
+                  )
+                ) : (
+                  <div className="text-center py-8 text-xs text-gray-500 italic">カレンダーから日付を選んで、上のフォームから献立を相談してね！</div>
+                )}
+              </div>
+            )}
 
-              {activeTab === 'shopping' && (
-                <div className="space-y-6">
-                  {shoppingSections.length > 0 ? (
-                    <>
-                      {/* 🛒 1. まだ冷蔵庫にないアイテムのセクション */}
-                      {shoppingSections.map((sec, secIdx) => {
-                        const itemsToBuy = sec.items.filter(item => !item.inStock);
-                        if (itemsToBuy.length === 0) return null;
-                        
-                        return (
-                          <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
-                            <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              {sec.items.map((item, itemIdx) => {
-                                if (item.inStock) return null;
-                                return (
-                                  <div key={item.id} className="flex gap-1">
-                                    <button onClick={() => {
-                                      const updated = [...shoppingSections]; 
-                                      updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; 
-                                      setShoppingSections(updated);
-                                    }} className={`flex-1 border rounded-l-lg px-2.5 py-2 text-left flex items-center gap-2 truncate ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
-                                      <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
-                                      <span className="truncate">{item.name}</span>
-                                    </button>
-                                    <button title="冷蔵庫にある" onClick={() => {
-                                      const updated = [...shoppingSections];
-                                      updated[secIdx].items[itemIdx].inStock = true;
-                                      setShoppingSections(updated);
-                                    }} className="border border-zinc-800/40 bg-zinc-950/60 hover:bg-cyan-950/40 px-2 rounded-r-lg text-xs text-cyan-600 hover:text-cyan-400 transition-all font-sans font-bold">
-                                      ❄️
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* ❄️ 2. 冷蔵庫にあるものリスト */}
-                      <div className="pt-4 border-t border-zinc-800/80 space-y-2">
-                        <h4 className="text-xs font-bold text-green-400 flex items-center gap-1">❄️ 冷蔵庫にあるものリスト</h4>
-                        {shoppingSections.some(sec => sec.items.some(item => item.inStock)) ? (
+            {activeTab === 'shopping' && (
+              <div className="space-y-6">
+                {aiResponse && shoppingSections.length > 0 ? (
+                  <>
+                    {/* 🛒 1. まだ冷蔵庫にないアイテムのセクション */}
+                    {shoppingSections.map((sec, secIdx) => {
+                      const itemsToBuy = sec.items.filter(item => !item.inStock);
+                      if (itemsToBuy.length === 0) return null;
+                      
+                      return (
+                        <div key={secIdx} className="border-b border-zinc-800/50 pb-3 last:border-0">
+                          <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
                           <div className="grid grid-cols-2 gap-2 text-xs">
-                            {shoppingSections.map((sec, secIdx) => 
-                              sec.items.map((item, itemIdx) => {
-                                if (!item.inStock) return null;
-                                return (
-                                  <button key={item.id} onClick={() => {
-                                    const updated = [...shoppingSections];
-                                    updated[secIdx].items[itemIdx].inStock = false;
+                            {sec.items.map((item, itemIdx) => {
+                              if (item.inStock) return null;
+                              return (
+                                <div key={item.id} className="flex gap-1">
+                                  <button onClick={() => {
+                                    const updated = [...shoppingSections]; 
+                                    updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; 
                                     setShoppingSections(updated);
-                                  }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-center justify-between gap-1 group hover:border-cyan-800 transition-all">
-                                    <span className="truncate opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
-                                    <span className="text-[9px] text-gray-600 group-hover:text-cyan-500 font-bold font-sans">戻す</span>
+                                  }} className={`flex-1 border rounded-l-lg px-2.5 py-2 text-left flex items-center gap-2 truncate ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                    <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                                    <span className="truncate">{item.name}</span>
                                   </button>
-                                );
-                              })
-                            )}
+                                  <button title="冷蔵庫にある" onClick={() => {
+                                    const updated = [...shoppingSections];
+                                    updated[secIdx].items[itemIdx].inStock = true;
+                                    setShoppingSections(updated);
+                                  }} className="border border-zinc-800/40 bg-zinc-950/60 hover:bg-cyan-950/40 px-2 rounded-r-lg text-xs text-cyan-600 hover:text-cyan-400 transition-all font-sans font-bold">
+                                    ❄️
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
-                        ) : (
-                          <div className="text-[10px] text-gray-600 italic pl-1">冷蔵庫にストックした食材はありません。</div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "リストの読み込みに失敗しました。"}</div>
-                  )}
-                </div>
-              )}
+                        </div>
+                      );
+                    })}
 
-              {/* 📊 分析タブ：年月リスト選択対応アップデート */}
-              {activeTab === 'stats' && (
-                <div className="space-y-4 p-2">
-                  <div className="flex flex-col gap-2 pb-3 border-b border-zinc-800">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">集計対象の期間</p>
-                    
-                    {/* 🔄 集計スコープの切り替えタブ */}
-                    <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900 text-[10px]">
-                      <button type="button" onClick={() => setStatsPeriod('month')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'month' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年月</button>
-                      <button type="button" onClick={() => setStatsPeriod('year')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'year' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年だけ</button>
-                      <button type="button" onClick={() => setStatsPeriod('all')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'all' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>全期間累計</button>
+                    {/* ❄️ 2. 冷蔵庫にあるものリスト */}
+                    <div className="pt-4 border-t border-zinc-800/80 space-y-2">
+                      <h4 className="text-xs font-bold text-green-400 flex items-center gap-1">❄️ 冷蔵庫にあるものリスト</h4>
+                      {shoppingSections.some(sec => sec.items.some(item => item.inStock)) ? (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          {shoppingSections.map((sec, secIdx) => 
+                            sec.items.map((item, itemIdx) => {
+                              if (!item.inStock) return null;
+                              return (
+                                <button key={item.id} onClick={() => {
+                                  const updated = [...shoppingSections];
+                                  updated[secIdx].items[itemIdx].inStock = false;
+                                  setShoppingSections(updated);
+                                }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-center justify-between gap-1 group hover:border-cyan-800 transition-all">
+                                  <span className="truncate opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
+                                  <span className="text-[9px] text-gray-600 group-hover:text-cyan-500 font-bold font-sans">戻す</span>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-gray-600 italic pl-1">冷蔵庫にストックした食材はありません。</div>
+                      )}
                     </div>
+                  </>
+                ) : aiResponse ? (
+                  <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "リストの読み込みに失敗しました。"}</div>
+                ) : (
+                  <div className="text-center py-8 text-xs text-gray-500 italic">献立を相談すると、必要な買い物リストがここに自動生成されるよ！</div>
+                )}
+              </div>
+            )}
 
-                    {/* 🎛️ 年月をリスト（セレクトボックス）から独立選択するフォーム */}
-                    {statsPeriod !== 'all' && (
-                      <div className="flex gap-2 mt-1">
-                        <select value={statsYear} onChange={(e) => setStatsYear(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
-                          {dynamicStatsYears.map(y => <option key={y} value={y}>{y}年</option>)}
-                        </select>
-                        
-                        {statsPeriod === 'month' && (
-                          <select value={statsMonth} onChange={(e) => setStatsMonth(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
-                            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
-                          </select>
-                        )}
-                      </div>
-                    )}
+            {/* 📊 分析タブ：AI未相談でも履歴データがあれば即座に機能 */}
+            {activeTab === 'stats' && (
+              <div className="space-y-4 p-2">
+                <div className="flex flex-col gap-2 pb-3 border-b border-zinc-800">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">集計対象の期間</p>
+                  
+                  <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900 text-[10px]">
+                    <button type="button" onClick={() => setStatsPeriod('month')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'month' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年月</button>
+                    <button type="button" onClick={() => setStatsPeriod('year')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'year' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年だけ</button>
+                    <button type="button" onClick={() => setStatsPeriod('all')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'all' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>全期間累計</button>
                   </div>
 
-                  {getStats().map(s => (
-                    <div key={s.category} className="space-y-1">
-                      <div className="flex justify-between text-[10px] font-bold uppercase">
-                        <span className={s.category === '外食' || s.category === '買い食い' ? 'text-red-400' : 'text-cyan-400'}>{s.category}</span>
-                        <span className="font-mono">¥{s.total.toLocaleString()}</span>
-                      </div>
-                      <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden border border-zinc-800">
-                        <div className={`h-full transition-all ${s.category === '外食' ? 'bg-red-500' : s.category === '買い食い' ? 'bg-orange-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (s.total / 10000) * 100)}%` }}></div>
-                      </div>
+                  {statsPeriod !== 'all' && (
+                    <div className="flex gap-2 mt-1">
+                      <select value={statsYear} onChange={(e) => setStatsYear(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
+                        {dynamicStatsYears.map(y => <option key={y} value={y}>{y}年</option>)}
+                      </select>
+                      
+                      {statsPeriod === 'month' && (
+                        <select value={statsMonth} onChange={(e) => setStatsMonth(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
+                          {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                        </select>
+                      )}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
+
+                {getStats().map(s => (
+                  <div key={s.category} className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-bold uppercase">
+                      <span className={s.category === '外食' || s.category === '買い食い' ? 'text-red-400' : 'text-cyan-400'}>{s.category}</span>
+                      <span className="font-mono">¥{s.total.toLocaleString()}</span>
+                    </div>
+                    <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden border border-zinc-800">
+                      <div className={`h-full transition-all ${s.category === '外食' ? 'bg-red-500' : s.category === '買い食い' ? 'bg-orange-500' : 'bg-green-500'}`} style={{ width: `${Math.min(100, (s.total / 10000) * 100)}%` }}></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
         <div className="text-center pt-8"><button onClick={resetData} className="text-zinc-800 text-[10px] uppercase tracking-[0.2em] font-bold">Reset Data</button></div>
       </main>
