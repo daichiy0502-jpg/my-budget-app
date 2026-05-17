@@ -33,7 +33,8 @@ export default function BudgetBiteAI() {
   
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  // 日付の管理を string[] に変更 ("YYYY-MM-DD")
+  const [selectedDays, setSelectedDays] = useState<string[]>([]);
 
   const [statsPeriod, setStatsPeriod] = useState<'all' | 'year' | 'month'>('month');
   const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
@@ -80,15 +81,33 @@ export default function BudgetBiteAI() {
 
     const savedSelectedDays = localStorage.getItem('budgetbite_selected_days');
     if (savedSelectedDays) {
-      setSelectedDays(JSON.parse(savedSelectedDays));
+      try {
+        const parsed = JSON.parse(savedSelectedDays);
+        // 過去のnumber[]データが入っていた場合の互換性ケア
+        if (parsed.length > 0 && typeof parsed[0] === 'number') {
+          const today = new Date();
+          const converted = parsed.map((d: number) => `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+          setSelectedDays(converted);
+          localStorage.setItem('budgetbite_selected_days', JSON.stringify(converted));
+        } else {
+          setSelectedDays(parsed);
+        }
+      } catch (e) {
+        setDefaultToday();
+      }
     } else {
-      const today = new Date();
-      setSelectedDays([today.getDate()]);
-      localStorage.setItem('budgetbite_selected_days', JSON.stringify([today.getDate()]));
+      setDefaultToday();
     }
 
     fetchBudgetData();
   }, []);
+
+  const setDefaultToday = () => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    setSelectedDays([todayStr]);
+    localStorage.setItem('budgetbite_selected_days', JSON.stringify([todayStr]));
+  };
 
   useEffect(() => { 
     fetchBudgetData(); 
@@ -408,23 +427,31 @@ export default function BudgetBiteAI() {
     }
   };
 
+  // 文字列ベース(YYYY-MM-DD)に修正した選択関数
   const handleDaySelect = (dayNum: number) => {
-    let nextDays: number[] = [];
-    if (selectedDays.includes(dayNum)) {
-      nextDays = selectedDays.filter(d => d !== dayNum);
+    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    
+    let nextDays: string[] = [];
+    if (selectedDays.includes(dateStr)) {
+      nextDays = selectedDays.filter(d => d !== dateStr);
     } else {
-      nextDays = [...selectedDays, dayNum].sort((a, b) => a - b);
+      nextDays = [...selectedDays, dateStr].sort();
     }
     setSelectedDays(nextDays);
     localStorage.setItem('budgetbite_selected_days', JSON.stringify(nextDays));
   };
 
-  const handleLoadHistoryRecipe = (rawText: string, targetDay: number) => {
+  const handleLoadHistoryRecipe = (rawText: string, targetDateStr: string) => {
     if (rawText) {
       updateAiResponse(rawText);
-      setSelectedDays([targetDay]);
-      localStorage.setItem('budgetbite_selected_days', JSON.stringify([targetDay]));
-      alert(`${targetDay}日の過去レシピとカレンダーの選択を同期したよ！`);
+      setSelectedDays([targetDateStr]);
+      localStorage.setItem('budgetbite_selected_days', JSON.stringify([targetDateStr]));
+      
+      const [y, m] = targetDateStr.split('-');
+      setSelectedYear(parseInt(y));
+      setSelectedMonth(parseInt(m));
+      
+      alert(`過去のレシピとカレンダーの選択を同期したよ！`);
     }
   };
 
@@ -441,11 +468,17 @@ export default function BudgetBiteAI() {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       
-      const targetDatesDetailed = selectedDays.map(d => {
-        const dayOfWeekEng = new Date(selectedYear, selectedMonth - 1, d).getDay();
-        return `${selectedYear}年${selectedMonth}月${d}日(${DAY_MAP_ENG_TO_JA[dayOfWeekEng]})`;
+      // YYYY-MM-DD から詳細な日付表現を復元
+      const targetDatesDetailed = selectedDays.map(dStr => {
+        const [y, m, d] = dStr.split('-').map(Number);
+        const dayOfWeekEng = new Date(y, m - 1, d).getDay();
+        return `${y}年${m}月${d}日(${DAY_MAP_ENG_TO_JA[dayOfWeekEng]})`;
       });
-      const targetDateStr = selectedDays.map(d => `${selectedYear}年${selectedMonth}月${d}日`).join(', ');
+      
+      const targetDateStr = selectedDays.map(dStr => {
+        const [y, m, d] = dStr.split('-');
+        return `${y}年${parseInt(m)}月${parseInt(d)}日`;
+      }).join(', ');
       
       const prompt = `あなたは優秀な節約料理 of プロです。以下の条件に従って、【指定された日付分だけ】の献立、買い物リスト、速度重視の翌日に向けた下準備を指定のフォーマットで漏れなく作成してください。
 選択された日数が1日だけなら1日分、5日なら5日分のみを出力し、指定されていない日付の献立は【絶対に】含めないでください。
@@ -531,7 +564,11 @@ export default function BudgetBiteAI() {
       const dateObj = new Date(selectedYear, selectedMonth - 1, d);
       const currentDayEng = dateObj.getDay();
       const dayJa = DAY_MAP_ENG_TO_JA[currentDayEng];
-      const isSelected = selectedDays.includes(d);
+      
+      // ループ内の固有日付文字列
+      const loopDateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      // 年月日すべてが一致しているときだけ選択状態にする
+      const isSelected = selectedDays.includes(loopDateStr);
       
       const matchedHistoryItem = history.find(item => item.name.includes(`AI相談`) && item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
       
@@ -544,7 +581,7 @@ export default function BudgetBiteAI() {
               title="過去のレシピを読み込む" 
               onClick={(e) => {
                 e.stopPropagation(); 
-                if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse, d);
+                if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse, loopDateStr);
               }}
               className="absolute bottom-1 w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse hover:scale-150 transition-all"
             ></div>
@@ -554,6 +591,13 @@ export default function BudgetBiteAI() {
     }
 
     const dynamicYears = Array.from({ length: 86 }, (_, i) => 2020 + i);
+
+    // 画面表示用に選択された日付を見やすく整形 (例: "5/18, 6/1")
+    const displaySelectedText = selectedDays.map(d => {
+      const [,, day] = d.split('-');
+      const [, month] = d.split('-');
+      return `${parseInt(month)}/${parseInt(day)}`;
+    }).join(', ');
 
     return (
       <div className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800 space-y-3">
@@ -570,7 +614,7 @@ export default function BudgetBiteAI() {
         </div>
         <div className="grid grid-cols-7 gap-1 max-h-[160px] overflow-y-auto pr-1">{gridCells}</div>
         <div className="text-center text-[10px] font-bold text-cyan-400 bg-zinc-950 py-1 rounded-xl border border-zinc-900">
-          選択日: {selectedDays.length > 0 ? selectedDays.map(d => `${d}日`).join(', ') : '未選択'}
+          選択日: {selectedDays.length > 0 ? displaySelectedText : '未選択'}
         </div>
       </div>
     );
@@ -697,7 +741,7 @@ export default function BudgetBiteAI() {
                   )
                 ) : (
                   <div className="text-center py-8 text-xs text-gray-500 italic">
-                    現在表示するレシピはありません。<br />カレンダーの青丸ポチを押すか、新しく相談してね！
+                    現在表示するレシピはありません。<br />カレンダーの日の丸ポチを押すか、新しく相談してね！
                   </div>
                 )}
               </div>
