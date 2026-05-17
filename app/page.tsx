@@ -187,17 +187,19 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       
       if (parsedDays.length > 0) {
-        // 現在画面上のStateにある activeDay、またはリロード対策でlocalStorageから引いた値があるか確認
-        const currentTarget = activeDay || localStorage.getItem('budgetbite_active_day') || "";
+        // ★ 修正超強化ポイント：StateかlocalStorageのどちらかに有効な日付があるかを厳密チェック
+        const savedLocal = typeof window !== 'undefined' ? localStorage.getItem('budgetbite_active_day') : "";
+        const currentTarget = activeDay || savedLocal || "";
+        
         const isStillValid = parsedDays.some(d => d.day === currentTarget);
         
         if (isStillValid) {
-          // すでに有効な選択状態があるならリロードを跨いでもそれを絶対に維持！
+          // すでに記憶がある場合は、リロード直後でも絶対にその日付を死守する！
           if (activeDay !== currentTarget) {
             setActiveDay(currentTarget);
           }
         } else {
-          // 有効な日付がなければ、生成されたデータの1件目をセットしてlocalStorageも更新
+          // localStorageも含めて本当に「全く何も選ばれていない初回」だけ、1件目を初期セット
           const firstValid = parsedDays.find(d => d.displayDay !== "");
           if (firstValid) {
             setActiveDay(firstValid.day);
@@ -247,7 +249,7 @@ export default function BudgetBiteAI() {
       }
       setShoppingSections(parsedSections);
     } catch (e) { console.error("Parse Error:", e); }
-  }, [aiResponse]); // パース時に毎回判定を行う
+  }, [aiResponse, activeDay]); // activeDayの状態も一緒にしっかり監視する
 
   // 日付ボタンをポチッと手動で切り替えた時の関数（localStorageに即保存！）
   const handleActiveDayChange = (dayString: string) => {
