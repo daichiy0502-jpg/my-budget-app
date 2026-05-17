@@ -165,7 +165,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -432,8 +432,10 @@ export default function BudgetBiteAI() {
       );
     }
 
+    // 💡 ここを完全に「一生モノ」に修正！
+    // 過去5年から、未来50年先（計56年分）の選択肢を常に動的生成するようにしました。
     const currentYear = new Date().getFullYear();
-    const dynamicYears = Array.from({ length: 7 }, (_, i) => currentYear - 3 + i);
+    const dynamicYears = Array.from({ length: 56 }, (_, i) => currentYear - 5 + i);
 
     return (
       <div className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800 space-y-3">
@@ -456,7 +458,6 @@ export default function BudgetBiteAI() {
     );
   };
 
-  // 💡 選択されている日付が過去履歴にあるかどうかを判定するヘルパー
   const isViewingHistory = selectedDays.length > 0 && history.some(item => 
     item.name.startsWith('AI相談') && selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`))
   );
@@ -568,10 +569,9 @@ export default function BudgetBiteAI() {
         {/* 🍽️ 提案された献立・買い物リスト表示領域 */}
         {aiResponse && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
-            {/* 💡 画面表示：過去ログを振り返り表示しているときのリマインダーバッジ */}
             {isViewingHistory && (
               <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
-                📁 過去ログ復元中: {selectedDays.map(d => `${d}日`).join(', ')}
+                📁 過去ログ復元中: {selectedDays.map(d => `${d}日`).join(', ') || '選択日'}
               </div>
             )}
 
