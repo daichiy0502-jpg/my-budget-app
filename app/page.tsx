@@ -67,24 +67,23 @@ export default function BudgetBiteAI() {
       localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(defaultShops));
     }
 
-    // ✨ レシピ回答を復元
+    // レシピ回答を復元
     const savedAiResponse = localStorage.getItem('budgetbite_ai_response');
     if (savedAiResponse) {
       setAiResponse(savedAiResponse);
     }
 
-    // ✨ 献立タブの選択されている日付見出しを復元
+    // 献立タブの選択されている日付見出しを復元
     const savedActiveDay = localStorage.getItem('budgetbite_active_day');
     if (savedActiveDay) {
       setActiveDay(savedActiveDay);
     }
 
-    // ✨ カレンダーで選ばれていた日付配列を復元
+    // カレンダーで選ばれていた日付配列を復元
     const savedSelectedDays = localStorage.getItem('budgetbite_selected_days');
     if (savedSelectedDays) {
       setSelectedDays(JSON.parse(savedSelectedDays));
     } else {
-      // 完全な初回だけ今日を選択
       const today = new Date();
       setSelectedDays([today.getDate()]);
       localStorage.setItem('budgetbite_selected_days', JSON.stringify([today.getDate()]));
@@ -146,7 +145,7 @@ export default function BudgetBiteAI() {
           const trimmed = line.trim();
           if (trimmed.startsWith('###') && !trimmed.startsWith('####')) return; 
 
-          if (trimmed.includes('下準備') && trimmed.startsWith('#')) {
+          if (trimmed.includes('下準備') && (trimmed.startsWith('#') || trimmed.startsWith('-') || trimmed.startsWith('・'))) {
             isPrepSection = true;
             return;
           }
@@ -407,7 +406,7 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // ✨ Geminiに相談するメイン処理
+  // Geminiに相談するメイン処理
   const askGemini = async () => {
     if (selectedDays.length === 0) {
       setLoading(false);
@@ -439,7 +438,7 @@ export default function BudgetBiteAI() {
 ・個別リクエスト：${userRequest}
 
 【出力フォーマット】
-※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇条書きで書いてください。
+※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇取りで書いてください。
 ※複数日選択されている場合は、各日付ごとにこのセットを繰り返してください。翌日の調理が特になく下準備が不要な場合は「※特に不要です」と書いてください。
 
 ### ${targetDatesDetailed[0]}
@@ -467,7 +466,6 @@ export default function BudgetBiteAI() {
       const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
       
-      // ✨ 応答テキストと、その時のカレンダー選択日(selectedDays)を両方同時にローカルストレージへロック
       updateAiResponse(text); 
       localStorage.setItem('budgetbite_selected_days', JSON.stringify(selectedDays));
       
@@ -521,7 +519,7 @@ export default function BudgetBiteAI() {
           <span>{d}</span>
           {matchedHistoryItem && (
             <div 
-               Bertram="過去のレシピを読み込む" 
+              title="過去のレシピを読み込む" 
               onClick={(e) => {
                 e.stopPropagation(); 
                 if(matchedHistoryItem.rawAiResponse) handleLoadHistoryRecipe(matchedHistoryItem.rawAiResponse, d);
@@ -543,7 +541,6 @@ export default function BudgetBiteAI() {
             <select value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="bg-black border border-zinc-800 rounded-lg text-xs px-2 py-1 text-white font-mono">
               {dynamicYears.map(y => <option key={y} value={y}>{y}年</option>)}
             </select>
-            {/* ✨ 月を変更したときに日付配列(selectedDays)を強制クリアしないように変更 */}
             <select value={selectedMonth} onChange={(e) => setSelectedMonth(parseInt(e.target.value))} className="bg-black border border-zinc-800 rounded-lg text-xs px-2 py-1 text-white font-mono">
               {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
             </select>
@@ -760,20 +757,33 @@ export default function BudgetBiteAI() {
                 {aiResponse ? (
                   menuDays.length > 0 ? (
                     <>
+                      {/* 上部の日付切り替え横並びボタン（3・4枚目のイメージ通り） */}
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 flex-wrap justify-between">
                         {menuDays.map((md) => {
                           if (!md.displayDay) return null;
+                          const isCurrentActive = activeDay === md.day;
                           return (
-                            <button key={md.day} onClick={() => handleActiveDayChange(md.day)} className={`px-2 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] transition-all ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500 hover:text-gray-300'}`}>{md.displayDay}</button>
+                            <button 
+                              key={md.day} 
+                              onClick={() => handleActiveDayChange(md.day)} 
+                              className={`px-3 py-2 rounded-xl font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] transition-all ${
+                                isCurrentActive 
+                                  ? 'bg-amber-700 text-amber-100 border border-amber-600 font-bold' 
+                                  : 'bg-zinc-900/60 text-gray-400 border border-zinc-800/40 hover:bg-zinc-900'
+                              }`}
+                            >
+                              {md.displayDay}
+                            </button>
                           );
                         })}
                       </div>
 
+                      {/* 下準備の中身表示カード（スマート表示版） */}
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
                           <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
                           {currentActiveDayData && (
-                            <span className="text-[10px] bg-amber-950/80 border border-amber-800/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
+                            <span className="text-[10px] bg-amber-950/80 border border-amber-900/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
                               ({currentActiveDayData.displayDay}の夜に仕込む)
                             </span>
                           )}
