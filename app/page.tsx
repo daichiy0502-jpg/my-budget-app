@@ -635,7 +635,7 @@ export default function BudgetBiteAI() {
           <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">
-            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく選択日のレシピをAIに相談する`}
+            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `選択した日のレシピをAIに相談する`}
           </button>
         </div>
 
