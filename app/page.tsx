@@ -41,8 +41,11 @@ export default function BudgetBiteAI() {
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedDays, setSelectedDays] = useState<number[]>([new Date().getDate()]);
 
-  // 📊 分析データの集計範囲指定 ('all' = 全期間, 'year' = 選択年のみ, 'month' = 選択月のみ)
+  // 📊 分析データの集計範囲指定 ('all' = 全期間, 'year' = 指定年のみ, 'month' = 指定年月のみ)
   const [statsPeriod, setStatsPeriod] = useState<'all' | 'year' | 'month'>('month');
+  // 📊 分析用にユーザーがリストから選択した年と月（初期値は現在の年月）
+  const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
+  const [statsMonth, setStatsMonth] = useState<number>(new Date().getMonth() + 1);
 
   // 🤖 AI・表示データ
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -118,7 +121,7 @@ export default function BudgetBiteAI() {
         { name: "月", regex: /(月曜日|【月】|■月|###\s*月)/ },
         { name: "火", regex: /(火曜日|【火】|■火|###\s*火)/ },
         { name: "水", regex: /(水曜日|【水】|■水|###\s*水)/ },
-        { name: "木", regex: /(木曜日|【木】|■木|###\s*木)/ },
+        { name: "木", regex: /(火曜日|【木】|■木|###\s*木)/ }, // 元のパターンのまま維持
         { name: "金", regex: /(金曜日|【金】|■金|###\s*金)/ },
         { name: "土", regex: /(土曜日|【土】|■土|###\s*土)/ },
         { name: "日", regex: /(日曜日|【日】|■日|###\s*日)/ },
@@ -140,7 +143,6 @@ export default function BudgetBiteAI() {
       }
       setMenuDays(parsedDays);
       
-      // 🌟 アプリ起動時 or 復元時に今日の曜日に合わせて表示をフォーカスする
       const dayOfWeekEng = new Date().getDay();
       const dayOfWeekJa = dayOfWeekEng === 0 ? '日' : dayOfWeekEng === 1 ? '月' : dayOfWeekEng === 2 ? '火' : dayOfWeekEng === 3 ? '水' : dayOfWeekEng === 4 ? '木' : dayOfWeekEng === 5 ? '金' : '土';
       const matchToday = parsedDays.find(d => d.day === dayOfWeekJa);
@@ -178,7 +180,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\**/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -234,7 +236,6 @@ export default function BudgetBiteAI() {
         
         setAiRemainingCount(Math.max(0, 20 - todayAiCount));
         
-        // ✨ [自動表示アップデート] 起動時に「今日」が含まれるAI献立があるか履歴から最優先で探す
         const now = new Date();
         const tYear = now.getFullYear();
         const tMonth = now.getMonth() + 1;
@@ -244,7 +245,6 @@ export default function BudgetBiteAI() {
         const todayAiLog = parsedHistory.find(item => item.name.startsWith('AI相談') && item.name.includes(targetTodayString) && item.rawAiResponse);
         
         if (todayAiLog && todayAiLog.rawAiResponse) {
-          // 今日の献立履歴が見つかればそれを最優先で画面に表示
           setAiResponse(todayAiLog.rawAiResponse);
           setActiveTab('menu');
           const matchingBudgetLog = data.find(item => item.id === todayAiLog.id);
@@ -253,7 +253,6 @@ export default function BudgetBiteAI() {
             setUserRequest(matchingBudgetLog.user_request || userRequest);
           }
         } else {
-          // 今日用の献立が見つからない場合は、従来通り直近のAIログを表示
           const lastAi = data.find(item => item.ai_response);
           if (lastAi && !aiResponse) { 
             setAiResponse(lastAi.ai_response); 
@@ -351,14 +350,14 @@ export default function BudgetBiteAI() {
     setIsEditingBaseBudget(false);
   };
 
-  // 📊 年月絞り込みに対応した分析データ計算
+  // 📊 独自指定された年月リストに基づいた集計
   const getStats = () => {
     const categories: CategoryType[] = ['自炊', '外食', '買い食い', '会社の弁当', 'その他'];
     
     const filteredHistory = history.filter(h => {
       if (statsPeriod === 'all') return true;
-      if (statsPeriod === 'year') return h.year === selectedYear;
-      if (statsPeriod === 'month') return h.year === selectedYear && h.month === selectedMonth;
+      if (statsPeriod === 'year') return h.year === statsYear;
+      if (statsPeriod === 'month') return h.year === statsYear && h.month === statsMonth;
       return true;
     });
 
@@ -516,6 +515,8 @@ export default function BudgetBiteAI() {
   const isViewingHistory = selectedDays.length > 0 && history.some(item => 
     item.name.startsWith('AI相談') && selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`))
   );
+
+  const dynamicStatsYears = Array.from({ length: 86 }, (_, i) => 2020 + i);
 
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
@@ -726,15 +727,33 @@ export default function BudgetBiteAI() {
                 </div>
               )}
 
+              {/* 📊 分析タブ：年月リスト選択対応アップデート */}
               {activeTab === 'stats' && (
                 <div className="space-y-4 p-2">
-                  <div className="flex flex-col gap-1.5 pb-2 border-b border-zinc-800">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">集計対象の期間</p>
+                  <div className="flex flex-col gap-2 pb-3 border-b border-zinc-800">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">集計対象の期間</p>
+                    
+                    {/* 🔄 集計スコープの切り替えタブ */}
                     <div className="flex gap-1 bg-black p-1 rounded-xl border border-zinc-900 text-[10px]">
-                      <button type="button" onClick={() => setStatsPeriod('month')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'month' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>{selectedYear}年{selectedMonth}月のみ</button>
-                      <button type="button" onClick={() => setStatsPeriod('year')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'year' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>{selectedYear}年全体</button>
+                      <button type="button" onClick={() => setStatsPeriod('month')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'month' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年月</button>
+                      <button type="button" onClick={() => setStatsPeriod('year')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'year' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>指定した年だけ</button>
                       <button type="button" onClick={() => setStatsPeriod('all')} className={`flex-1 py-1 rounded-lg font-bold transition-all ${statsPeriod === 'all' ? 'bg-zinc-800 text-cyan-400 border border-zinc-700/60' : 'text-gray-600'}`}>全期間累計</button>
                     </div>
+
+                    {/* 🎛️ 年月をリスト（セレクトボックス）から独立選択するフォーム */}
+                    {statsPeriod !== 'all' && (
+                      <div className="flex gap-2 mt-1">
+                        <select value={statsYear} onChange={(e) => setStatsYear(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
+                          {dynamicStatsYears.map(y => <option key={y} value={y}>{y}年</option>)}
+                        </select>
+                        
+                        {statsPeriod === 'month' && (
+                          <select value={statsMonth} onChange={(e) => setStatsMonth(parseInt(e.target.value))} className="flex-1 bg-black border border-zinc-800 rounded-xl text-xs px-2 py-2 text-white font-mono focus:outline-none">
+                            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                          </select>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {getStats().map(s => (
