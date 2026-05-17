@@ -74,14 +74,12 @@ export default function BudgetBiteAI() {
     fetchBudgetData(); 
   }, [baseBudget]);
 
-  // 📅 カレンダーの日付が選ばれたら、過去ログから自動でデータを復元・表示する（ボタン不要化）
+  // 日付指定による自動データ復元
   useEffect(() => {
     if (selectedDays.length === 0) {
       setAiResponse("");
       return;
     }
-
-    // 選択された日付のいずれかが含まれる過去ログを探す
     const found = history.find(item => {
       if (!item.name.startsWith('AI相談') || !item.rawAiResponse) return false;
       return selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`));
@@ -90,63 +88,62 @@ export default function BudgetBiteAI() {
     if (found && found.rawAiResponse) {
       setAiResponse(found.rawAiResponse);
     } else {
-      // 新しい日付でまだ相談ログがない場合は表示をクリアして新規相談を待つ
       setAiResponse("");
     }
   }, [selectedYear, selectedMonth, selectedDays, history]);
 
-  // AIのテキスト応答をパースして、献立・買い物・下準備に分離
+  // 🛠️ 強化されたAIレスポンスのパース処理
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
     }
     try {
+      // 1. 買い物リストより前の「献立ブロック」を抽出
       const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
-      const menuLines = menuPart.split('\n');
-      const parsedDays: MenuDay[] = [];
-      let currentDayName = "";
-      let currentDayText: string[] = [];
-      let currentPrepText: string[] = [];
-      let isReadingPrep = false;
       
-      menuLines.forEach((line) => {
-        const trimmed = line.trim();
-        
-        if (trimmed.startsWith('###')) {
-          if (currentDayName && (currentDayText.length > 0 || currentPrepText.length > 0)) {
-            parsedDays.push({ 
-              day: currentDayName, 
-              content: currentDayText.join('\n').trim(),
-              prep: currentPrepText.join('\n').trim() || "※特に不要です"
-            });
-          }
-          currentDayName = trimmed.replace(/###/g, '').trim(); 
-          currentDayText = [line]; 
-          currentPrepText = [];
-          isReadingPrep = false;
-        } else if (currentDayName) {
+      // 日付見出し「### 2026年...」で分割
+      const dayBlocks = menuPart.split(/###\s*/);
+      const parsedDays: MenuDay[] = [];
+
+      dayBlocks.forEach(block => {
+        const lines = block.split('\n');
+        const headerLine = lines[0].trim();
+        if (!headerLine) return; // 空ブロックはスキップ
+
+        let contentLines: string[] = [];
+        let prepLines: string[] = [];
+        let isPrepSection = false;
+
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          const trimmed = line.trim();
+          
+          // 「下準備」の見出しを検知したら、それ以降は下準備用配列に回す
           if (trimmed.startsWith('####') && trimmed.includes('下準備')) {
-            isReadingPrep = true;
-          } else if (isReadingPrep) {
-            currentPrepText.push(line);
+            isPrepSection = true;
+            continue; 
+          }
+
+          if (isPrepSection) {
+            if (trimmed) prepLines.push(line);
           } else {
-            currentDayText.push(line);
+            contentLines.push(line);
           }
         }
-      });
-      if (currentDayName && (currentDayText.length > 0 || currentPrepText.length > 0)) {
-        parsedDays.push({ 
-          day: currentDayName, 
-          content: currentDayText.join('\n').trim(),
-          prep: currentPrepText.join('\n').trim() || "※特に不要です"
+
+        parsedDays.push({
+          day: headerLine,
+          content: contentLines.join('\n').trim(),
+          prep: prepLines.join('\n').trim() || "※特に不要です"
         });
-      }
+      });
+
       setMenuDays(parsedDays);
-      
       if (parsedDays.length > 0) {
         setActiveDay(parsedDays[0].day); 
       }
 
+      // 2. 🛒 買い物リストのパース
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
@@ -189,7 +186,7 @@ export default function BudgetBiteAI() {
         }
       }
       setShoppingSections(parsedSections);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Parse Error:", e); }
   }, [aiResponse]);
 
   const fetchBudgetData = async () => {
@@ -215,7 +212,6 @@ export default function BudgetBiteAI() {
                   dObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
           };
         });
-
         setHistory(parsedHistory);
 
         const todayStr = new Date().toLocaleDateString('ja-JP'); 
@@ -413,10 +409,12 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 📝 献立内容のレンダリング（下準備はここで完全に弾いて非表示にする）
+  // 🍳 献立の成形出力（下準備の文字は完全に弾く構造）
   const formatMenuContent = (rawText: string) => {
-    return rawText.split('\n').filter(l => !l.trim().startsWith('###')).map((line, idx) => {
+    return rawText.split('\n').map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
+      
+      // 下準備やその他の不要テキストをレンダリングさせない
       if (trimmed.includes('常備品') || trimmed.includes('想定') || trimmed.includes('下準備')) return null;
 
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
@@ -489,7 +487,7 @@ export default function BudgetBiteAI() {
   const shoppingText = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
 
   const currentActiveDayData = menuDays.find(d => d.day === activeDay);
-  const currentPrepText = currentActiveDayData ? currentActiveDayData.prep : "※特に不要、または1日のみの指定です。";
+  const currentPrepText = currentActiveDayData ? currentActiveDayData.prep : "※特に不要、またはデータがありません。";
 
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
@@ -558,7 +556,7 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 📅 カレンダー（日付指定で自動表示） */}
+        {/* 📅 カレンダー（日付指定で自動復元） */}
         {renderMonthCalendar()}
 
         {/* 🤖 AIプランニング入力フォーム */}
@@ -586,7 +584,7 @@ export default function BudgetBiteAI() {
           </div>
           
           <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
-            {/* 1. 📅 献立タブ */}
+            {/* 1. 📅 献立タブ（下準備を完全に除外） */}
             {activeTab === 'menu' && (
               <div className="space-y-4">
                 {aiResponse ? (
@@ -594,10 +592,12 @@ export default function BudgetBiteAI() {
                     <>
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.day}</button>
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.day.split('(')[0].replace(/^\d+年\d+月/, '')}日</button>
                         ))}
                       </div>
-                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">{formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}</div>
+                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">
+                        {formatMenuContent(menuDays.find(d => d.day === activeDay)?.content || "")}
+                      </div>
                     </>
                   ) : (
                     <div className="whitespace-pre-wrap text-xs">{aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0]}</div>
@@ -610,7 +610,7 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
-            {/* 2. 🛒 買い物タブ（下準備を完全に排除） */}
+            {/* 2. 🛒 買い物タブ */}
             {activeTab === 'shopping' && (
               <div className="space-y-6">
                 {aiResponse && shoppingSections.length > 0 ? (
@@ -683,7 +683,7 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
-            {/* 3. ⏳ 下準備タブ（日付別ミニタブと完全連動） */}
+            {/* 3. ⏳ 下準備タブ（パース修正・連動版） */}
             {activeTab === 'prep' && (
               <div className="space-y-4">
                 {aiResponse ? (
@@ -691,7 +691,7 @@ export default function BudgetBiteAI() {
                     <>
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.day}</button>
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.day.split('(')[0].replace(/^\d+年\d+月/, '')}日</button>
                         ))}
                       </div>
 
