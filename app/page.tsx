@@ -165,7 +165,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -432,13 +432,16 @@ export default function BudgetBiteAI() {
       );
     }
 
+    const currentYear = new Date().getFullYear();
+    const dynamicYears = Array.from({ length: 7 }, (_, i) => currentYear - 3 + i);
+
     return (
       <div className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800 space-y-3">
         <div className="flex justify-between items-center px-1">
           <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calendar Target</label>
           <div className="flex gap-2">
             <select value={selectedYear} onChange={(e) => setSelectedYear(parseInt(e.target.value))} className="bg-black border border-zinc-800 rounded-lg text-xs px-2 py-1 text-white font-mono">
-              {[2026, 2027, 2028].map(y => <option key={y} value={y}>{y}年</option>)}
+              {dynamicYears.map(y => <option key={y} value={y}>{y}年</option>)}
             </select>
             <select value={selectedMonth} onChange={(e) => { setSelectedMonth(parseInt(e.target.value)); setSelectedDays([]); }} className="bg-black border border-zinc-800 rounded-lg text-xs px-2 py-1 text-white font-mono">
               {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
@@ -453,6 +456,11 @@ export default function BudgetBiteAI() {
     );
   };
 
+  // 💡 選択されている日付が過去履歴にあるかどうかを判定するヘルパー
+  const isViewingHistory = selectedDays.length > 0 && history.some(item => 
+    item.name.startsWith('AI相談') && selectedDays.some(d => item.name.includes(`${selectedYear}年${selectedMonth}月${d}日`))
+  );
+
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
       <header className="max-w-md mx-auto mb-8 text-center">
@@ -460,7 +468,7 @@ export default function BudgetBiteAI() {
       </header>
 
       <main className="max-w-md mx-auto space-y-6">
-        {/* 💳 予算カード (基準予算 変更機能つき) */}
+        {/* 💳 予算カード */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-8 shadow-2xl text-center">
           <p className="text-xs uppercase tracking-widest text-gray-500 mb-1 font-bold">Remaining Budget</p>
           <div className="text-5xl font-mono text-white my-2 font-bold">¥{budget.toLocaleString()}</div>
@@ -476,7 +484,6 @@ export default function BudgetBiteAI() {
             )}
           </div>
           
-          {/* 💡 画面表示：本日のAI利用可能枠インジケーター */}
           <div className="mt-3 text-[11px] font-bold px-3 py-1 bg-black/40 border border-zinc-800/80 rounded-full inline-flex items-center gap-1.5">
             <span className={aiRemainingCount > 5 ? "text-cyan-400" : aiRemainingCount > 0 ? "text-orange-400" : "text-red-500"}>
               🤖 本日のAI枠: あと {aiRemainingCount} / 20 回
@@ -560,7 +567,14 @@ export default function BudgetBiteAI() {
 
         {/* 🍽️ 提案された献立・買い物リスト表示領域 */}
         {aiResponse && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
+            {/* 💡 画面表示：過去ログを振り返り表示しているときのリマインダーバッジ */}
+            {isViewingHistory && (
+              <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
+                📁 過去ログ復元中: {selectedDays.map(d => `${d}日`).join(', ')}
+              </div>
+            )}
+
             <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
               <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
               <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物リスト</button>
@@ -589,7 +603,7 @@ export default function BudgetBiteAI() {
                 <div className="space-y-6">
                   {shoppingSections.length > 0 ? (
                     <>
-                      {/* 🛒 1. まだ冷蔵庫にない（買う必要がある）アイテムのセクション */}
+                      {/* 🛒 1. まだ冷蔵庫にないアイテムのセクション */}
                       {shoppingSections.map((sec, secIdx) => {
                         const itemsToBuy = sec.items.filter(item => !item.inStock);
                         if (itemsToBuy.length === 0) return null;
@@ -599,10 +613,9 @@ export default function BudgetBiteAI() {
                             <h4 className="text-xs font-bold text-cyan-500 mb-2">{sec.title}</h4>
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               {sec.items.map((item, itemIdx) => {
-                                if (item.inStock) return null; // 冷蔵庫にあるものはここでは非表示
+                                if (item.inStock) return null;
                                 return (
                                   <div key={item.id} className="flex gap-1">
-                                    {/* 通常の買い物チェックボタン */}
                                     <button onClick={() => {
                                       const updated = [...shoppingSections]; 
                                       updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; 
@@ -611,8 +624,6 @@ export default function BudgetBiteAI() {
                                       <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
                                       <span className="truncate">{item.name}</span>
                                     </button>
-                                    
-                                    {/* ❄️ 冷蔵庫にあるよチェックボタン */}
                                     <button title="冷蔵庫にある" onClick={() => {
                                       const updated = [...shoppingSections];
                                       updated[secIdx].items[itemIdx].inStock = true;
@@ -628,7 +639,7 @@ export default function BudgetBiteAI() {
                         );
                       })}
 
-                      {/* ❄️ 2. 「冷蔵庫にあるものリスト」を一番下にまとめて表示 */}
+                      {/* ❄️ 2. 冷蔵庫にあるものリスト */}
                       <div className="pt-4 border-t border-zinc-800/80 space-y-2">
                         <h4 className="text-xs font-bold text-green-400 flex items-center gap-1">❄️ 冷蔵庫にあるものリスト</h4>
                         {shoppingSections.some(sec => sec.items.some(item => item.inStock)) ? (
@@ -639,7 +650,7 @@ export default function BudgetBiteAI() {
                                 return (
                                   <button key={item.id} onClick={() => {
                                     const updated = [...shoppingSections];
-                                    updated[secIdx].items[itemIdx].inStock = false; // 買い物リストに戻す
+                                    updated[secIdx].items[itemIdx].inStock = false;
                                     setShoppingSections(updated);
                                   }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-center justify-between gap-1 group hover:border-cyan-800 transition-all">
                                     <span className="truncate opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
