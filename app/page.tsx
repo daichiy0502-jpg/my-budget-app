@@ -165,7 +165,7 @@ export default function BudgetBiteAI() {
           const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
-            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
+            let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\转/g, '').replace(/\*\*/g, '').trim();
             
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) {
               continue;
@@ -398,7 +398,7 @@ export default function BudgetBiteAI() {
       }
 
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
-        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\转/g, '').replace(/\*\*/g, '')}</div>;
+        return <div key={idx} className="text-sm font-bold text-cyan-300 mt-3 mb-1 border-l-2 border-cyan-500 pl-2">🍳 {trimmed.replace(/\*\转/g, '').replace(/\*\**/g, '')}</div>;
       }
       if (trimmed.startsWith('・') || trimmed.startsWith('-') || /^\d/.test(trimmed)) {
         const contentOnly = trimmed.replace(/^[\s・\-\d\.]+\s*/, '');
@@ -432,10 +432,8 @@ export default function BudgetBiteAI() {
       );
     }
 
-    // 💡 ここを完全に「一生モノ」に修正！
-    // 過去5年から、未来50年先（計56年分）の選択肢を常に動的生成するようにしました。
-    const currentYear = new Date().getFullYear();
-    const dynamicYears = Array.from({ length: 56 }, (_, i) => currentYear - 5 + i);
+    // 💡 2020年から2105年まで（だいちゃんの100歳超えプラン！）の選択肢を完全に網羅
+    const dynamicYears = Array.from({ length: 86 }, (_, i) => 2020 + i);
 
     return (
       <div className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800 space-y-3">
