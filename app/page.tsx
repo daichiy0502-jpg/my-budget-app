@@ -25,6 +25,9 @@ export default function BudgetBiteAI() {
   const [inputBaseBudget, setInputBaseBudget] = useState("");
   const [budget, setBudget] = useState(25000);
 
+  // 🤖 AI残り回数 (無料枠の上限20回から逆算)
+  const [aiRemainingCount, setAiRemainingCount] = useState<number>(20);
+
   // 📝 入力フォーム
   const [itemName, setItemName] = useState("");
   const [expense, setExpense] = useState("");
@@ -191,6 +194,16 @@ export default function BudgetBiteAI() {
           date: new Date(item.created_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
                 new Date(item.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
         })));
+
+        // 💡 箇条書き機能: 本日の「AI相談」の合計件数をカウントして残り回数を逆算する
+        const todayStr = new Date().toLocaleDateString('ja-JP'); // 例: "2026/5/17"
+        const todayAiCount = data.filter(item => {
+          const isAi = item.item_name && item.item_name.startsWith('AI相談');
+          const isToday = new Date(item.created_at).toLocaleDateString('ja-JP') === todayStr;
+          return isAi && isToday;
+        }).length;
+        
+        setAiRemainingCount(Math.max(0, 20 - todayAiCount));
         
         const lastAi = data.find(item => item.ai_response);
         if (lastAi && !aiResponse) { 
@@ -299,10 +312,13 @@ export default function BudgetBiteAI() {
   const resetData = async () => {
     if (!confirm("リセットする？")) return;
     const { error } = await supabase.from('budgets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); }
+    if (!error) { setBudget(25000); setAiResponse(""); setHistory([]); setStock(""); setAiRemainingCount(20); }
   };
 
   const askGemini = async () => {
+    if (aiRemainingCount <= 0) {
+      return alert("本日のAI利用回数（20回）の上限に達したよ！明日また試すか、コードを一時的にダミーデータに差し替えてテストしてね！");
+    }
     setLoading(true);
     try {
       const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
@@ -447,6 +463,14 @@ export default function BudgetBiteAI() {
                <span className="cursor-pointer" onClick={() => { setIsEditingBaseBudget(true); setInputBaseBudget(baseBudget.toString()); }}>基準予算: ¥{baseBudget.toLocaleString()} ✏️</span>
             )}
           </div>
+          
+          {/* 💡 画面表示：本日のAI利用可能枠インジケーター */}
+          <div className="mt-3 text-[11px] font-bold px-3 py-1 bg-black/40 border border-zinc-800/80 rounded-full inline-flex items-center gap-1.5">
+            <span className={aiRemainingCount > 5 ? "text-cyan-400" : aiRemainingCount > 0 ? "text-orange-400" : "text-red-500"}>
+              🤖 本日のAI枠: あと {aiRemainingCount} / 20 回
+            </span>
+          </div>
+
           <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-4 overflow-hidden">
             <div className="bg-cyan-500 h-full transition-all" style={{ width: `${Math.max(0, (budget/baseBudget)*100)}%` }}></div>
           </div>
@@ -491,7 +515,9 @@ export default function BudgetBiteAI() {
         <div className="bg-zinc-900/40 p-4 rounded-3xl border border-zinc-800 space-y-4">
           <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
-          <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">{loading ? "Geminiが考え中..." : "AIコンシェルジュに相談する"}</button>
+          <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">
+            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : "AIコンシェルジュに相談する"}
+          </button>
         </div>
 
         {/* 📊 履歴表示（上位5件） */}
