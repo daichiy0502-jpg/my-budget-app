@@ -9,7 +9,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface ShoppingItem { id: string; name: string; checked: boolean; inStock?: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
-interface MenuDay { day: string; content: string; }
+interface MenuDay { day: string; content: string; prep: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; year: number; month: number; rawDateObj: Date; }
 
 type ActiveTabType = 'menu' | 'shopping' | 'stats';
@@ -109,29 +109,46 @@ export default function BudgetBiteAI() {
       setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
     }
     try {
-      // 📅 1. 献立テキストの曜日・日付分解
+      // 📅 1. 献立テキストの曜日・日付分解と、日ごとの下準備のパース
       const menuPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[0];
       const menuLines = menuPart.split('\n');
       const parsedDays: MenuDay[] = [];
       let currentDayName = "";
       let currentDayText: string[] = [];
+      let currentPrepText: string[] = [];
+      let isReadingPrep = false;
       
       menuLines.forEach((line) => {
         const trimmed = line.trim();
-        if (!trimmed) { if (currentDayName) currentDayText.push(line); return; }
         
         if (trimmed.startsWith('###')) {
-          if (currentDayName && currentDayText.length > 0) {
-            parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+          if (currentDayName && (currentDayText.length > 0 || currentPrepText.length > 0)) {
+            parsedDays.push({ 
+              day: currentDayName, 
+              content: currentDayText.join('\n').trim(),
+              prep: currentPrepText.join('\n').trim() || "※特に不要です"
+            });
           }
           currentDayName = trimmed.replace(/###/g, '').trim(); 
           currentDayText = [line]; 
-        } else if (currentDayName) { 
-          currentDayText.push(line); 
+          currentPrepText = [];
+          isReadingPrep = false;
+        } else if (currentDayName) {
+          if (trimmed.startsWith('####') && trimmed.includes('下準備')) {
+            isReadingPrep = true;
+          } else if (isReadingPrep) {
+            currentPrepText.push(line);
+          } else {
+            currentDayText.push(line);
+          }
         }
       });
-      if (currentDayName && currentDayText.length > 0) {
-        parsedDays.push({ day: currentDayName, content: currentDayText.join('\n').trim() });
+      if (currentDayName && (currentDayText.length > 0 || currentPrepText.length > 0)) {
+        parsedDays.push({ 
+          day: currentDayName, 
+          content: currentDayText.join('\n').trim(),
+          prep: currentPrepText.join('\n').trim() || "※特に不要です"
+        });
       }
       setMenuDays(parsedDays);
       
@@ -143,8 +160,7 @@ export default function BudgetBiteAI() {
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
       if (parts.length < 2) { setShoppingSections([]); return; }
       
-      // 📝 下準備セクションが含まれる場合もあるため、純粋な買い物部分をパース
-      const shoppingText = parts[1].split(/##\s*⏳?\s*翌日に向けた下準備/i)[0];
+      const shoppingText = parts[1];
       const lines = shoppingText.split('\n');
       const parsedSections: ShoppingSection[] = [];
       let currentSectionIdx = -1;
@@ -387,8 +403,8 @@ export default function BudgetBiteAI() {
       });
       const targetDateStr = selectedDays.map(d => `${selectedYear}年${selectedMonth}月${d}日`).join(', ');
       
-      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、【指定された日付分だけ】の献立、買い物リスト、そして翌日に向けた下準備を、指定のフォーマットで漏れなく作成してください。
-選択された日数が1日だけなら1日分、3日なら3日分のみを出力し、指定されていない日付や曜日の献立は【絶対に】含めないでください。
+      const prompt = `あなたは優秀な節約料理のプロです。以下の条件に従って、【指定された日付分だけ】の献立、買い物リスト、そして【日ごとの翌日に向けた下準備】を指定のフォーマットで漏れなく作成してください。
+選択された日数が1日だけなら1日分、3日なら3日分のみを出力し、指定されていない日付の献立は【絶対に】含めないでください。
 出力の最初から最後まで、フォーマット以外の挨拶、解説、応援メッセージなどの雑談は【絶対に】一切含めないでください。
 
 【条件】
@@ -399,13 +415,17 @@ export default function BudgetBiteAI() {
 ・個別リクエスト：${userRequest}
 
 【出力フォーマット】
-※各日付の見出しは必ず「### 日付(曜日)」という形式にしてください。
+※各日付の見出しは必ず「### 日付(曜日)」という形式にし、その日のレシピ手順の直後に、必ず「#### ⏳ この日の夜にやる翌日への下準備」という見出しを作って、その日に行うべき下準備を1日分だけ箇条書きで書いてください。
+※複数日選択されている場合は、各日付ごとにこのセットを繰り返してください。1日のみ選ばれている場合や、翌日の調理が特になく下準備が不要な場合は「※特に不要です」と書いてください。
 
 ### ${targetDatesDetailed[0]}
 **メニュー名**
 ・手順をここに書く
 
-(複数日ある場合は同様に繰り返す)
+#### ⏳ この日の夜にやる翌日への下準備
+- ここにこの日の夜に仕込む翌日用の下準備を具体的に書く（肉のタレ漬け込み、野菜のまとめ切りなど）
+
+(複数日ある場合は上記セットを日付ごとに繰り返す)
 
 ## 🛒 買い物リスト
 
@@ -417,11 +437,7 @@ export default function BudgetBiteAI() {
 
 ### 【調味料】
 - 調味料名
-※注意：調理手順の中で登場する調味料は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。
-
-## ⏳ 翌日に向けた下準備
-※選択された日数が【2日以上】ある場合は、ユーザーからの個別リクエストがなくても、前日の夜にやっておくと当日の調理が時短になる具体的な下準備（お肉の味付け、野菜のまとめ切り、冷凍保存など）を【必ず漏れなく】箇条書きで出力してください。
-※選択された日数が1日のみの場合や、翌日の献立が存在しない場合のみ、「※特に不要です」と出力してください。`;
+※注意：調理手順の中で登場する調味料は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
@@ -508,9 +524,12 @@ export default function BudgetBiteAI() {
     ? selectedDays.map(d => `${selectedMonth}月${d}日`).join(', ') 
     : `${selectedMonth}月の日付`;
 
-  // 🛍️ 買い物リストと下準備テキストを分離して表示するためのヘルパー
-  const shoppingRawPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
-  const [shoppingOnlyText, prepText] = shoppingRawPart.split(/##\s*⏳?\s*翌日に向けた下準備/i);
+  // 🛍️ 買い物リストの部分だけを抽出
+  const shoppingText = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
+
+  // 現在アクティブな曜日の下準備テキストを取得
+  const currentActiveDayData = menuDays.find(d => d.day === activeDay);
+  const currentPrepText = currentActiveDayData ? currentActiveDayData.prep : "※特に不要、または1日のみの指定です。";
 
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
@@ -593,7 +612,7 @@ export default function BudgetBiteAI() {
 
         {/* 📊 履歴表示 */}
         {history.length > 0 && (
-          <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
+          <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 Temp space-y-3">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Recent Activity</p>
             {history.slice(0, 5).map(item => (
               <div key={item.id} className="flex justify-between items-center border-b border-zinc-900 pb-2 last:border-0">
@@ -719,16 +738,29 @@ export default function BudgetBiteAI() {
                       )}
                     </div>
 
-                    {/* ⏳ 翌日に向けた下準備表示エリア */}
+                    {/* ⏳ 翌日に向けた下準備表示エリア（曜日切り替えタブと完全連動） */}
                     <div className="pt-4 border-t border-zinc-800/80 space-y-2">
-                      <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
+                        {activeDay && (
+                          <span className="text-[10px] bg-amber-950 border border-amber-700/60 text-amber-300 px-2 py-0.5 rounded-md font-bold">
+                            {activeDay.split('(')[0].replace(/^\d+年\d+月/, '')}日の夜にやる事
+                          </span>
+                        )}
+                      </div>
                       <div className="bg-zinc-950/80 border border-zinc-900 p-3 rounded-xl text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
-                        {prepText ? prepText.trim() : "※特に不要、または1日のみの指定です。"}
+                        {currentPrepText.split('\n').map((line, idx) => {
+                          const trimmed = line.trim();
+                          if (trimmed.startsWith('-') || trimmed.startsWith('・')) {
+                            return <div key={idx} className="pl-2 py-0.5 text-gray-300">👉 {trimmed.replace(/^[\-・]\s*/, '')}</div>;
+                          }
+                          return <div key={idx}>{line}</div>;
+                        })}
                       </div>
                     </div>
                   </>
                 ) : aiResponse ? (
-                  <div className="whitespace-pre-wrap text-xs">{shoppingOnlyText || "リストの読み込みに失敗しました。"}</div>
+                  <div className="whitespace-pre-wrap text-xs">{shoppingText || "リストの読み込みに失敗しました。"}</div>
                 ) : (
                   <div className="text-center py-8 text-xs text-gray-500 italic">献立を相談すると、必要な買い物リストと翌日の下準備がここに自動生成されるよ！</div>
                 )}
