@@ -48,6 +48,7 @@ export default function BudgetBiteAI() {
   const [activeDay, setActiveDay] = useState<string>("");
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
 
+  // 1. 初回読み込み時にlocalStorageから過去の状態を復元
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
@@ -64,6 +65,12 @@ export default function BudgetBiteAI() {
       ];
       setFavoriteShops(defaultShops);
       localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(defaultShops));
+    }
+
+    // リロード時に直前まで選ばれていた日付を復元
+    const savedActiveDay = localStorage.getItem('budgetbite_active_day');
+    if (savedActiveDay) {
+      setActiveDay(savedActiveDay);
     }
 
     const today = new Date();
@@ -109,10 +116,10 @@ export default function BudgetBiteAI() {
     }
   }, [selectedYear, selectedMonth, selectedDays, history]);
 
-  // ✨ 直前の日付の選択状態（activeDay）を完璧に保持するパースロジック
+  // ✨ リロードされても絶対に日付選択状態を壊さないパースロジック
   useEffect(() => {
     if (!aiResponse) {
-      setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
+      setShoppingSections([]); setMenuDays([]); return;
     }
     try {
       const parts = aiResponse.split(/##\s*🛒\s*買い物リスト/i);
@@ -180,13 +187,22 @@ export default function BudgetBiteAI() {
       setMenuDays(parsedDays);
       
       if (parsedDays.length > 0) {
-        // ★ 修正ポイント: 新しいリストの中に、すでに選択されていた activeDay が存在するか確認
-        const isStillValid = parsedDays.some(d => d.day === activeDay);
+        // 現在画面上のStateにある activeDay、またはリロード対策でlocalStorageから引いた値があるか確認
+        const currentTarget = activeDay || localStorage.getItem('budgetbite_active_day') || "";
+        const isStillValid = parsedDays.some(d => d.day === currentTarget);
         
-        // 直前まで選んでいた状態がリスト内にあるならキープ！ない場合だけ最初の1件目をセットする
-        if (!isStillValid) {
+        if (isStillValid) {
+          // すでに有効な選択状態があるならリロードを跨いでもそれを絶対に維持！
+          if (activeDay !== currentTarget) {
+            setActiveDay(currentTarget);
+          }
+        } else {
+          // 有効な日付がなければ、生成されたデータの1件目をセットしてlocalStorageも更新
           const firstValid = parsedDays.find(d => d.displayDay !== "");
-          if (firstValid) setActiveDay(firstValid.day);
+          if (firstValid) {
+            setActiveDay(firstValid.day);
+            localStorage.setItem('budgetbite_active_day', firstValid.day);
+          }
         }
       }
 
@@ -212,7 +228,7 @@ export default function BudgetBiteAI() {
           parsedSections.push({ title: `【${cleanTitle}】`, items: [] });
           currentSectionIdx = parsedSections.length - 1;
         } else if (currentSectionIdx >= 0) {
-          const isBulletPoint = /^[\s\-\*・\d\.]/.test(trimmed);
+          const isBulletPoint = /^[\s\-\* Caravans \-\*・\d\.]/.test(trimmed);
           
           if (isBulletPoint) {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\**/g, '').trim();
@@ -231,7 +247,13 @@ export default function BudgetBiteAI() {
       }
       setShoppingSections(parsedSections);
     } catch (e) { console.error("Parse Error:", e); }
-  }, [aiResponse, activeDay]); // activeDayの変更も検知の対象に含める
+  }, [aiResponse]); // パース時に毎回判定を行う
+
+  // 日付ボタンをポチッと手動で切り替えた時の関数（localStorageに即保存！）
+  const handleActiveDayChange = (dayString: string) => {
+    setActiveDay(dayString);
+    localStorage.setItem('budgetbite_active_day', dayString);
+  };
 
   const fetchBudgetData = async () => {
     try {
@@ -624,7 +646,7 @@ export default function BudgetBiteAI() {
                         {menuDays.map((md) => {
                           if (!md.displayDay) return null;
                           return (
-                            <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-300'}`}>{md.displayDay}</button>
+                            <button key={md.day} onClick={() => handleActiveDayChange(md.day)} className={`px-2 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-300'}`}>{md.displayDay}</button>
                           );
                         })}
                       </div>
@@ -726,7 +748,7 @@ export default function BudgetBiteAI() {
                         {menuDays.map((md) => {
                           if (!md.displayDay) return null;
                           return (
-                            <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] transition-all ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500 hover:text-gray-300'}`}>{md.displayDay}</button>
+                            <button key={md.day} onClick={() => handleActiveDayChange(md.day)} className={`px-2 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 text-center min-w-[50px] transition-all ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500 hover:text-gray-300'}`}>{md.displayDay}</button>
                           );
                         })}
                       </div>
