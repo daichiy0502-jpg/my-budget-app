@@ -12,7 +12,8 @@ interface ShoppingSection { title: string; items: ShoppingItem[]; }
 interface MenuDay { day: string; content: string; prep: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; year: number; month: number; rawDateObj: Date; }
 
-type ActiveTabType = 'menu' | 'shopping' | 'stats';
+// ⏳ タブの型に 'prep' を独立して追加
+type ActiveTabType = 'menu' | 'shopping' | 'prep' | 'stats';
 type CategoryType = '自炊' | '外食' | '買い食い' | '会社の弁当' | 'その他';
 interface FavoriteShop { id: string; label: string; itemName: string; category: CategoryType; defaultPrice: string; }
 
@@ -612,7 +613,7 @@ export default function BudgetBiteAI() {
 
         {/* 📊 履歴表示 */}
         {history.length > 0 && (
-          <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 Temp space-y-3">
+          <div className="bg-zinc-900/30 rounded-2xl p-4 border border-zinc-800 space-y-3">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Recent Activity</p>
             {history.slice(0, 5).map(item => (
               <div key={item.id} className="flex justify-between items-center border-b border-zinc-900 pb-2 last:border-0">
@@ -644,13 +645,16 @@ export default function BudgetBiteAI() {
             </div>
           )}
 
+          {/* 🔘 4つの独立タブに拡張 */}
           <div className="flex gap-1 mb-4 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
-            <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
-            <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物＆下準備</button>
-            <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[11px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 分析</button>
+            <button onClick={() => setActiveTab('menu')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'menu' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📅 献立</button>
+            <button onClick={() => setActiveTab('shopping')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'shopping' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>🛒 買い物</button>
+            <button onClick={() => setActiveTab('prep')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'prep' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>⏳ 下準備</button>
+            <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-[10px] sm:text-[11px] ${activeTab === 'stats' ? 'bg-cyan-600 text-white' : 'text-gray-500'}`}>📊 分析</button>
           </div>
           
           <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
+            {/* 1. 📅 献立タブ */}
             {activeTab === 'menu' && (
               <div className="space-y-4">
                 {aiResponse ? (
@@ -674,6 +678,7 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
+            {/* 2. 🛒 買い物タブ（下準備を完全に排除して純粋なリストに） */}
             {activeTab === 'shopping' && (
               <div className="space-y-6">
                 {aiResponse && shoppingSections.length > 0 ? (
@@ -737,37 +742,62 @@ export default function BudgetBiteAI() {
                         <div className="text-[10px] text-gray-600 italic pl-1">冷蔵庫にストックした食材はありません。</div>
                       )}
                     </div>
-
-                    {/* ⏳ 翌日に向けた下準備表示エリア（曜日切り替えタブと完全連動） */}
-                    <div className="pt-4 border-t border-zinc-800/80 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
-                        {activeDay && (
-                          <span className="text-[10px] bg-amber-950 border border-amber-700/60 text-amber-300 px-2 py-0.5 rounded-md font-bold">
-                            {activeDay.split('(')[0].replace(/^\d+年\d+月/, '')}日の夜にやる事
-                          </span>
-                        )}
-                      </div>
-                      <div className="bg-zinc-950/80 border border-zinc-900 p-3 rounded-xl text-xs text-gray-400 whitespace-pre-wrap leading-relaxed">
-                        {currentPrepText.split('\n').map((line, idx) => {
-                          const trimmed = line.trim();
-                          if (trimmed.startsWith('-') || trimmed.startsWith('・')) {
-                            return <div key={idx} className="pl-2 py-0.5 text-gray-300">👉 {trimmed.replace(/^[\-・]\s*/, '')}</div>;
-                          }
-                          return <div key={idx}>{line}</div>;
-                        })}
-                      </div>
-                    </div>
                   </>
                 ) : aiResponse ? (
                   <div className="whitespace-pre-wrap text-xs">{shoppingText || "リストの読み込みに失敗しました。"}</div>
                 ) : (
-                  <div className="text-center py-8 text-xs text-gray-500 italic">献立を相談すると、必要な買い物リストと翌日の下準備がここに自動生成されるよ！</div>
+                  <div className="text-center py-8 text-xs text-gray-500 italic">献立を相談すると、必要な買い物リストがここに自動生成されるよ！</div>
                 )}
               </div>
             )}
 
-            {/* 📊 分析タブ */}
+            {/* 3. ⏳ 下準備タブ（完全独立・1日分ずつスマートに表示） */}
+            {activeTab === 'prep' && (
+              <div className="space-y-4">
+                {aiResponse ? (
+                  menuDays.length > 0 ? (
+                    <>
+                      {/* 📅 日付切り替えミニタブ */}
+                      <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
+                        {menuDays.map((md) => (
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.day}</button>
+                        ))}
+                      </div>
+
+                      <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
+                        <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
+                          <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
+                          {activeDay && (
+                            <span className="text-[10px] bg-amber-950/80 border border-amber-800/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
+                              {activeDay.split('(')[0].replace(/^\d+年\d+月/, '')}日(当日の夜)
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed space-y-1">
+                          {currentPrepText.split('\n').map((line, idx) => {
+                            const trimmed = line.trim();
+                            if (!trimmed) return null;
+                            if (trimmed.startsWith('-') || trimmed.startsWith('・')) {
+                              return <div key={idx} className="pl-2 py-1 text-gray-200 bg-zinc-900/30 rounded my-0.5 border-l border-amber-600/40">👉 {trimmed.replace(/^[\-・]\s*/, '')}</div>;
+                            }
+                            return <div key={idx} className="text-gray-400 py-0.5">{line}</div>;
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-gray-400 italic p-4 text-center">下準備データの解析に失敗したか、データがありません。</div>
+                  )
+                ) : (
+                  <div className="text-center py-8 text-xs text-gray-500 italic">
+                    献立を立てると、前日の夜にやっておくべき「下準備」が日付ごとにここに整理されるよ！
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 4. 📊 分析タブ */}
             {activeTab === 'stats' && (
               <div className="space-y-4 p-2">
                 <div className="flex flex-col gap-2 pb-3 border-b border-zinc-800">
