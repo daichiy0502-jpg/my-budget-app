@@ -9,7 +9,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface ShoppingItem { id: string; name: string; checked: boolean; inStock?: boolean; }
 interface ShoppingSection { title: string; items: ShoppingItem[]; }
-interface MenuDay { day: string; content: string; prep: string; }
+interface MenuDay { day: string; displayDay: string; content: string; prep: string; }
 interface HistoryItem { id: string; name: string; price: number; date: string; rawAiResponse?: string; year: number; month: number; rawDateObj: Date; }
 
 type ActiveTabType = 'menu' | 'shopping' | 'prep' | 'stats';
@@ -92,7 +92,7 @@ export default function BudgetBiteAI() {
     }
   }, [selectedYear, selectedMonth, selectedDays, history]);
 
-  // 🛠️ 強化されたAIレスポンスのパース処理
+  // 🛠️ 鉄壁仕様に強化されたAIレスポンスのパース処理
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); setActiveDay(""); return;
@@ -107,8 +107,20 @@ export default function BudgetBiteAI() {
 
       dayBlocks.forEach(block => {
         const lines = block.split('\n');
-        const headerLine = lines[0].trim();
+        let headerLine = lines[0].trim();
         if (!headerLine) return; // 空ブロックはスキップ
+
+        // もし日付見出しの後ろに「下準備」のゴミが混ざっていたら強制除去
+        if (headerLine.includes('下準備')) {
+          headerLine = headerLine.split(/#|\s|⏳/)[0].trim();
+        }
+
+        // ボタン表示用に「〇日」という綺麗な文字列を作る(例: 2026年5月18日(月) -> 18日)
+        let displayDay = headerLine;
+        const dateMatch = headerLine.match(/(\d+)日/);
+        if (dateMatch) {
+          displayDay = `${dateMatch[1]}日`;
+        }
 
         let contentLines: string[] = [];
         let prepLines: string[] = [];
@@ -118,14 +130,17 @@ export default function BudgetBiteAI() {
           const line = lines[i];
           const trimmed = line.trim();
           
-          // 「下準備」の見出しを検知したら、それ以降は下準備用配列に回す
-          if (trimmed.startsWith('####') && trimmed.includes('下準備')) {
+          // 下準備セクションの開始判定（シャープの数や末尾の「日」の有無に柔軟に対応）
+          if (/^#+\s*⏳?\s*この日の夜にやる.*下準備/.test(trimmed)) {
             isPrepSection = true;
             continue; 
           }
 
           if (isPrepSection) {
-            if (trimmed) prepLines.push(line);
+            // 下準備テキストの収集
+            if (trimmed && !trimmed.startsWith('#')) {
+              prepLines.push(line);
+            }
           } else {
             contentLines.push(line);
           }
@@ -133,6 +148,7 @@ export default function BudgetBiteAI() {
 
         parsedDays.push({
           day: headerLine,
+          displayDay: displayDay,
           content: contentLines.join('\n').trim(),
           prep: prepLines.join('\n').trim() || "※特に不要です"
         });
@@ -409,12 +425,11 @@ export default function BudgetBiteAI() {
     setLoading(false);
   };
 
-  // 🍳 献立の成形出力（下準備の文字は完全に弾く構造）
+  // 🍳 献立の成形出力
   const formatMenuContent = (rawText: string) => {
     return rawText.split('\n').map((line, idx) => {
       const trimmed = line.trim(); if (!trimmed) return <div key={idx} className="h-2"></div>;
       
-      // 下準備やその他の不要テキストをレンダリングさせない
       if (trimmed.includes('常備品') || trimmed.includes('想定') || trimmed.includes('下準備')) return null;
 
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
@@ -584,7 +599,7 @@ export default function BudgetBiteAI() {
           </div>
           
           <div className="text-gray-300 text-sm max-h-[380px] overflow-y-auto pr-1">
-            {/* 1. 📅 献立タブ（下準備を完全に除外） */}
+            {/* 1. 📅 献立タブ */}
             {activeTab === 'menu' && (
               <div className="space-y-4">
                 {aiResponse ? (
@@ -592,7 +607,7 @@ export default function BudgetBiteAI() {
                     <>
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.day.split('(')[0].replace(/^\d+年\d+月/, '')}日</button>
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-zinc-800 text-cyan-400 border border-cyan-800/50' : 'text-gray-500'}`}>{md.displayDay}</button>
                         ))}
                       </div>
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-1">
@@ -683,7 +698,7 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
-            {/* 3. ⏳ 下準備タブ（パース修正・連動版） */}
+            {/* 3. ⏳ 下準備タブ（パース修正＆完全クリーン連動版） */}
             {activeTab === 'prep' && (
               <div className="space-y-4">
                 {aiResponse ? (
@@ -691,16 +706,16 @@ export default function BudgetBiteAI() {
                     <>
                       <div className="flex gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800/60 overflow-x-auto">
                         {menuDays.map((md) => (
-                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.day.split('(')[0].replace(/^\d+年\d+月/, '')}日</button>
+                          <button key={md.day} onClick={() => setActiveDay(md.day)} className={`px-2.5 py-1.5 rounded-md font-bold text-[11px] whitespace-nowrap flex-1 ${activeDay === md.day ? 'bg-amber-900 text-amber-300 border border-amber-800/50' : 'text-gray-500'}`}>{md.displayDay}</button>
                         ))}
                       </div>
 
                       <div className="bg-zinc-950/60 border border-zinc-800/60 p-4 rounded-2xl space-y-3">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-2">
                           <h4 className="text-xs font-bold text-amber-400 flex items-center gap-1">⏳ 翌日に向けた下準備</h4>
-                          {activeDay && (
+                          {currentActiveDayData && (
                             <span className="text-[10px] bg-amber-950/80 border border-amber-800/60 text-amber-400 px-2 py-0.5 rounded-md font-bold font-mono">
-                              {activeDay.split('(')[0].replace(/^\d+年\d+月/, '')}日(当日の夜)
+                              {currentActiveDayData.displayDay}(当日の夜)
                             </span>
                           )}
                         </div>
