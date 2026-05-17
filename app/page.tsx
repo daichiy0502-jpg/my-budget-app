@@ -144,7 +144,7 @@ export default function BudgetBiteAI() {
       if (parts.length < 2) { setShoppingSections([]); return; }
       
       // 📝 下準備セクションが含まれる場合もあるため、純粋な買い物部分をパース
-      const shoppingText = parts[1].split(/##\s*⏳\s*翌日に向けた下準備/i)[0];
+      const shoppingText = parts[1].split(/##\s*⏳?\s*翌日に向けた下準備/i)[0];
       const lines = shoppingText.split('\n');
       const parsedSections: ShoppingSection[] = [];
       let currentSectionIdx = -1;
@@ -420,7 +420,8 @@ export default function BudgetBiteAI() {
 ※注意：調理手順の中で登場する調味料は、定番のものであっても決して省略せず、使用するすべての調味料の名前を漏れなく1行ずつ箇条書きにしてください。解説や余計な文章は一切不要です。
 
 ## ⏳ 翌日に向けた下準備
-※複数日の提案がある場合、前日の夜にやっておくと当日の時短になる下準備（肉のタレ漬け込みや野菜のカットなど）を具体的に箇条書きで提案してください。1日のみの指定で翌日の献立がない場合や、特に下準備が不要な場合でも、必ずこの見出しを出力し「※特に不要です」と書いてください。`;
+※選択された日数が【2日以上】ある場合は、ユーザーからの個別リクエストがなくても、前日の夜にやっておくと当日の調理が時短になる具体的な下準備（お肉の味付け、野菜のまとめ切り、冷凍保存など）を【必ず漏れなく】箇条書きで出力してください。
+※選択された日数が1日のみの場合や、翌日の献立が存在しない場合のみ、「※特に不要です」と出力してください。`;
       
       const result = await model.generateContent(prompt); const text = result.response.text();
       if (!text) throw new Error("応答が空でした。");
@@ -509,7 +510,7 @@ export default function BudgetBiteAI() {
 
   // 🛍️ 買い物リストと下準備テキストを分離して表示するためのヘルパー
   const shoppingRawPart = aiResponse.split(/##\s*🛒\s*買い物リスト/i)[1] || "";
-  const [shoppingOnlyText, prepText] = shoppingRawPart.split(/##\s*⏳\s*翌日に向けた下準備/i);
+  const [shoppingOnlyText, prepText] = shoppingRawPart.split(/##\s*⏳?\s*翌日に向けた下準備/i);
 
   return (
     <div className="min-h-screen bg-black text-gray-200 p-6 font-sans pb-20">
