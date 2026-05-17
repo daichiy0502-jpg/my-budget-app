@@ -266,10 +266,12 @@ export default function BudgetBiteAI() {
 
   const addExpense = async (e: React.FormEvent) => {
     e.preventDefault(); 
-    let price = parseInt(expense); 
-    if (activeCategory === '会社の弁当') price = 274;
+    
+    // 弁当のときは値を固定、未入力なら「社食弁当」に
+    let price = activeCategory === '会社の弁当' ? 274 : parseInt(expense); 
+    const finalItemName = activeCategory === '会社の弁当' ? (itemName || "社食弁当") : itemName;
 
-    const finalName = `[${activeCategory}] ${itemName || "買い物"}`;
+    const finalName = `[${activeCategory}] ${finalItemName || "買い物"}`;
     if (isNaN(price) || price <= 0) return alert("金額を正しく入力してね！");
     
     const { error } = await supabase.from('budgets').insert([{ 
@@ -282,19 +284,23 @@ export default function BudgetBiteAI() {
     }]);
     
     if (!error) { 
+      // 🚀 ここで先にカテゴリを「自炊」に戻すことで、再読み込み時のバグを完全にシャットアウト！
+      setActiveCategory('自炊'); 
       setExpense(""); 
       setItemName(""); 
-      if (activeCategory === '会社の弁当') {
-        setActiveCategory('自炊'); 
-      }
       fetchBudgetData(); 
     }
   };
 
   const addCurrentToFavorites = () => {
-    if (!itemName.trim()) return alert("お店の名前（品名）を入力してね！");
+    if (!itemName.trim() && activeCategory !== '会社の弁当') return alert("お店の名前（品名）を入力してね！");
+    
+    let finalItemName = itemName;
     let finalPrice = expense;
-    if (activeCategory === '会社の弁当') finalPrice = "274";
+    if (activeCategory === '会社の弁当') {
+      finalItemName = itemName || "社食弁当";
+      finalPrice = "274";
+    }
 
     let emoji = "🛒";
     if (activeCategory === "外食") emoji = "🍔";
@@ -303,8 +309,8 @@ export default function BudgetBiteAI() {
 
     const newShop: FavoriteShop = {
       id: `shop-${Date.now()}`,
-      label: `${emoji} ${itemName}`,
-      itemName: itemName,
+      label: `${emoji} ${finalItemName}`,
+      itemName: finalItemName,
       category: activeCategory,
       defaultPrice: finalPrice || "0"
     };
@@ -312,7 +318,7 @@ export default function BudgetBiteAI() {
     const updated = [...favoriteShops, newShop];
     setFavoriteShops(updated);
     localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(updated));
-    alert(`${itemName} をお気に入りに登録したよ！`);
+    alert(`${finalItemName} をお気に入りに登録したよ！`);
   };
 
   const deleteFavoriteShop = (id: string, e: React.MouseEvent) => {
@@ -325,9 +331,9 @@ export default function BudgetBiteAI() {
 
   const handleCategoryChange = (cat: CategoryType) => {
     setActiveCategory(cat);
+    // 💡 Stateを汚さず入力残りバグを防ぐため、ここではフォームの値を強制クリアしておく
     if (cat === '会社の弁当') {
-      setExpense("274");
-      if(!itemName) setItemName("社食弁当");
+      setExpense("");
     }
   };
 
@@ -565,9 +571,11 @@ export default function BudgetBiteAI() {
               <button key={cat} type="button" onClick={() => handleCategoryChange(cat)} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${activeCategory === cat ? 'bg-zinc-800 text-white border border-zinc-700' : 'text-gray-600'}`}>{cat}</button>
             ))}
           </div>
+          
           <form onSubmit={addExpense} className="flex gap-2">
-            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="メニュー名・店名" className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm focus:outline-none" />
-            <input type="number" value={expense} onChange={(e) => setExpense(e.target.value)} placeholder="金額" disabled={activeCategory === '会社の弁当'} className="w-20 bg-zinc-900 border border-zinc-800 rounded-xl px-2 py-3 text-white text-lg font-mono focus:outline-none text-center" />
+            {/* 💡 会社の弁当選択時は表示上「社食弁当」を強制プレースホルダーにしてStateを真っ白にキープ */}
+            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder={activeCategory === '会社の弁当' ? "社食弁当" : "メニュー名・店名"} className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-white text-sm focus:outline-none" />
+            <input type="number" value={activeCategory === '会社の弁当' ? "274" : expense} onChange={(e) => setExpense(e.target.value)} placeholder="金額" disabled={activeCategory === '会社の弁当'} className="w-20 bg-zinc-900 border border-zinc-800 rounded-xl px-2 py-3 text-white text-lg font-mono focus:outline-none text-center disabled:opacity-80 disabled:text-cyan-400" />
             <button className="bg-white text-black px-3 sm:px-5 rounded-xl font-bold text-xs whitespace-nowrap">記録</button>
           </form>
 
@@ -628,7 +636,7 @@ export default function BudgetBiteAI() {
           </div>
         )}
 
-        {/* 🍽️ タブ表示領域（常時表示するようにアップデート） */}
+        {/* 🍽️ タブ表示領域（常時表示） */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative">
           {isViewingHistory && (
             <div className="absolute -top-3 left-6 bg-cyan-950 border border-cyan-600 text-cyan-400 text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg z-10">
@@ -738,7 +746,7 @@ export default function BudgetBiteAI() {
               </div>
             )}
 
-            {/* 📊 分析タブ：AI未相談でも履歴データがあれば即座に機能 */}
+            {/* 📊 分析タブ */}
             {activeTab === 'stats' && (
               <div className="space-y-4 p-2">
                 <div className="flex flex-col gap-2 pb-3 border-b border-zinc-800">
