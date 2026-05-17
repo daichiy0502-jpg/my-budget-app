@@ -48,10 +48,8 @@ export default function BudgetBiteAI() {
   const [activeDay, setActiveDay] = useState<string>("");
   const [favoriteShops, setFavoriteShops] = useState<FavoriteShop[]>([]);
 
-  // 📜 履歴エリア専用のローカルタブ状態 ('expense' = 金額記録, 'ai' = AI相談記録)
   const [historyTab, setHistoryTab] = useState<'expense' | 'ai'>('expense');
 
-  // 1. 画面起動時にすべてを復元
   useEffect(() => {
     const savedBase = localStorage.getItem('budgetbite_base_budget');
     if (savedBase) {
@@ -70,19 +68,16 @@ export default function BudgetBiteAI() {
       localStorage.setItem('budgetbite_favorite_shops', JSON.stringify(defaultShops));
     }
 
-    // レシピ回答を復元
     const savedAiResponse = localStorage.getItem('budgetbite_ai_response');
     if (savedAiResponse) {
       setAiResponse(savedAiResponse);
     }
 
-    // 献立タブの選択されている日付見出しを復元
     const savedActiveDay = localStorage.getItem('budgetbite_active_day');
     if (savedActiveDay) {
       setActiveDay(savedActiveDay);
     }
 
-    // カレンダーで選ばれていた日付配列を復元
     const savedSelectedDays = localStorage.getItem('budgetbite_selected_days');
     if (savedSelectedDays) {
       setSelectedDays(JSON.parse(savedSelectedDays));
@@ -99,7 +94,6 @@ export default function BudgetBiteAI() {
     fetchBudgetData(); 
   }, [baseBudget]);
 
-  // レシピデータを永続保存する関数
   const updateAiResponse = (text: string) => {
     setAiResponse(text);
     if (typeof window !== 'undefined') {
@@ -107,7 +101,6 @@ export default function BudgetBiteAI() {
     }
   };
 
-  // レシピデータのパース処理
   useEffect(() => {
     if (!aiResponse) {
       setShoppingSections([]); setMenuDays([]); return;
@@ -223,7 +216,7 @@ export default function BudgetBiteAI() {
             let itemNameClean = trimmed.replace(/^[\s\-\*・\d\.]+/, '').replace(/\*\转/g, '').replace(/\*\**/g, '').trim();
             if (itemNameClean.startsWith('(') || itemNameClean.startsWith('（')) continue;
 
-            if (itemNameClean.length > 0 && itemNameClean.length < 20) {
+            if (itemNameClean.length > 0 && itemNameClean.length < 40) { 
               parsedSections[currentSectionIdx].items.push({ 
                 id: `item-${currentSectionIdx}-${lineIdx}`, 
                 name: itemNameClean, 
@@ -252,9 +245,20 @@ export default function BudgetBiteAI() {
         const activeBase = currentSavedBase ? parseInt(currentSavedBase) : baseBudget;
         setBudget(activeBase - totalExpense);
 
-        const parsedHistory = data.map((item): HistoryItem => {
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
+
+        const parsedHistory: HistoryItem[] = [];
+        
+        data.forEach((item) => {
           const dObj = new Date(item.created_at);
-          return {
+          const isAi = item.item_name && item.item_name.startsWith('AI相談');
+          
+          if (isAi && dObj < oneMonthAgo) {
+            return; 
+          }
+
+          parsedHistory.push({
             id: item.id, 
             name: item.item_name || "買い物", 
             price: item.expense_price || 0,
@@ -264,8 +268,9 @@ export default function BudgetBiteAI() {
             rawDateObj: dObj,
             date: dObj.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + " " + 
                   dObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-          };
+          });
         });
+        
         setHistory(parsedHistory);
 
         const todayStr = new Date().toLocaleDateString('ja-JP'); 
@@ -301,7 +306,7 @@ export default function BudgetBiteAI() {
       setExpense(""); 
       setItemName(""); 
       fetchBudgetData(); 
-      setHistoryTab('expense'); // 金額追加時は自動で出費タブを開く
+      setHistoryTab('expense');
     }
   };
 
@@ -489,7 +494,7 @@ export default function BudgetBiteAI() {
       
       await supabase.from('budgets').insert([{ budget_amount: budget, item_name: `AI相談 (${targetDateStr})`, expense_price: 0, stock_items: stock, user_request: userRequest, ai_response: text }]);
       fetchBudgetData();
-      setHistoryTab('ai'); // AI相談完了時は自動でAIタブを開く
+      setHistoryTab('ai');
     } catch (err: any) { updateAiResponse(`APIエラー: ${err.message || err}`); }
     setLoading(false);
   };
@@ -577,7 +582,6 @@ export default function BudgetBiteAI() {
   const currentActiveDayData = menuDays.find(d => d.day === activeDay);
   const currentPrepText = currentActiveDayData ? currentActiveDayData.prep : "※特に不要です";
 
-  // 📜 履歴データを「金額(出費)」と「AI相談」にフィルタリング
   const expenseHistory = history.filter(item => !item.name.includes("AI相談"));
   const aiHistory = history.filter(item => item.name.includes("AI相談"));
 
@@ -656,7 +660,7 @@ export default function BudgetBiteAI() {
           <input type="text" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="余っている食材" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none" />
           <textarea value={userRequest} onChange={(e) => setUserRequest(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white min-h-[80px] resize-none focus:outline-none" />
           <button onClick={askGemini} disabled={loading} className="w-full py-5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-2xl font-bold shadow-xl disabled:opacity-50">
-            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく選択した日のレシピをAIに相談する`}
+            {loading ? "Geminiが考え中..." : aiRemainingCount <= 0 ? "本日のAI枠上限です" : `新しく選択日のレシピをAIに相談する`}
           </button>
         </div>
 
@@ -715,20 +719,20 @@ export default function BudgetBiteAI() {
                             {sec.items.map((item, itemIdx) => {
                               if (item.inStock) return null;
                               return (
-                                <div key={item.id} className="flex gap-1">
+                                <div key={item.id} className="flex gap-1 items-stretch">
                                   <button onClick={() => {
                                     const updated = [...shoppingSections]; 
                                     updated[secIdx].items[itemIdx].checked = !updated[secIdx].items[itemIdx].checked; 
                                     setShoppingSections(updated);
-                                  }} className={`flex-1 border rounded-l-lg px-2.5 py-2 text-left flex items-center gap-2 truncate ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
-                                    <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
-                                    <span className="truncate">{item.name}</span>
+                                  }} className={`flex-1 border rounded-l-lg px-2.5 py-2 text-left flex items-start gap-2 ${item.checked ? 'text-gray-600 line-through bg-zinc-900/20 border-zinc-800' : 'text-gray-300 bg-zinc-950/60 border-zinc-800/40'}`}>
+                                    <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border shrink-0 mt-0.5 ${item.checked ? 'bg-cyan-900 border-cyan-600' : 'border-zinc-700'}`}>{item.checked && <span className="text-[10px] text-cyan-400">✓</span>}</div>
+                                    <span className="whitespace-normal break-all leading-tight font-medium">{item.name}</span>
                                   </button>
                                   <button title="冷蔵庫にある" onClick={() => {
                                     const updated = [...shoppingSections];
                                     updated[secIdx].items[itemIdx].inStock = true;
                                     setShoppingSections(updated);
-                                  }} className="border border-zinc-800/40 bg-zinc-950/60 hover:bg-cyan-950/40 px-2 rounded-r-lg text-xs text-cyan-600 hover:text-cyan-400 transition-all font-sans font-bold">
+                                  }} className="border border-zinc-800/40 bg-zinc-950/60 hover:bg-cyan-950/40 px-2 rounded-r-lg text-xs text-cyan-600 hover:text-cyan-400 transition-all font-sans font-bold shrink-0">
                                     ❄️
                                   </button>
                                 </div>
@@ -751,9 +755,9 @@ export default function BudgetBiteAI() {
                                   const updated = [...shoppingSections];
                                   updated[secIdx].items[itemIdx].inStock = false;
                                   setShoppingSections(updated);
-                                }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-center justify-between gap-1 group hover:border-cyan-800 transition-all">
-                                  <span className="truncate opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
-                                  <span className="text-[9px] text-gray-600 group-hover:text-cyan-500 font-bold font-sans">戻す</span>
+                                }} className="border border-zinc-800 bg-zinc-900/40 rounded-lg px-2.5 py-2 text-left text-gray-400 line-through flex items-start justify-between gap-1 group hover:border-cyan-800 transition-all">
+                                  <span className="whitespace-normal break-all leading-tight opacity-70">【{sec.title.replace(/[【】]/g, '')}】{item.name}</span>
+                                  <span className="text-[9px] text-gray-600 group-hover:text-cyan-500 font-bold font-sans shrink-0 ml-1 mt-0.5">戻す</span>
                                 </button>
                               );
                             })
@@ -876,11 +880,10 @@ export default function BudgetBiteAI() {
           </div>
         </div>
 
-        {/* 📜 履歴エリア（✨ 金額と相談を切り替えるタブ式に変更） */}
+        {/* 📜 履歴エリア */}
         <div className="bg-zinc-900/60 border border-zinc-800 p-5 rounded-3xl space-y-3">
           <div className="flex justify-between items-center border-b border-zinc-800/60 pb-2">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">履歴・記録の確認</p>
-            {/* 💾 内部切り替えスイッチ */}
             <div className="flex bg-black p-0.5 rounded-lg border border-zinc-800">
               <button type="button" onClick={() => setHistoryTab('expense')} className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${historyTab === 'expense' ? 'bg-zinc-800 text-cyan-400' : 'text-gray-600'}`}>
                 💰 出費 ({expenseHistory.length})
@@ -893,7 +896,6 @@ export default function BudgetBiteAI() {
 
           <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1 font-sans">
             {historyTab === 'expense' ? (
-              /* 💰 金額記録タブのコンテンツ */
               expenseHistory.length > 0 ? (
                 expenseHistory.map((item) => (
                   <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 pl-3 pr-2 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
@@ -907,7 +909,6 @@ export default function BudgetBiteAI() {
                         type="button" 
                         onClick={() => deleteSingleExpense(item.id, item.name)} 
                         className="text-gray-500 hover:text-red-400 text-sm p-1 font-bold transition-all"
-                        title="このレコードを削除"
                       >
                         ✕
                       </button>
@@ -918,7 +919,6 @@ export default function BudgetBiteAI() {
                 <div className="text-center py-4 text-[10px] text-gray-600 italic">まだ出費の記録はありません。</div>
               )
             ) : (
-              /* 🤖 AI相談記録タブのコンテンツ */
               aiHistory.length > 0 ? (
                 aiHistory.map((item) => (
                   <div key={item.id} className="flex justify-between items-center bg-black/40 border border-zinc-900 pl-3 pr-2 py-2 rounded-xl text-xs group transition-all hover:border-zinc-800">
@@ -931,7 +931,6 @@ export default function BudgetBiteAI() {
                         type="button" 
                         onClick={() => deleteSingleExpense(item.id, item.name)} 
                         className="text-gray-500 hover:text-red-400 text-sm p-1 font-bold transition-all"
-                        title="このレコードを削除"
                       >
                         ✕
                       </button>
@@ -939,7 +938,7 @@ export default function BudgetBiteAI() {
                   </div>
                 ))
               ) : (
-                <div className="text-center py-4 text-[10px] text-gray-600 italic">まだAI相談の記録はありません。</div>
+                <div className="text-center py-4 text-[10px] text-gray-600 italic">直近30日間のAI相談はありません。</div>
               )
             )}
           </div>
